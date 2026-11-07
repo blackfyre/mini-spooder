@@ -60,8 +60,19 @@ pio run -d firmware -e robot -t upload --upload-port "$ROBOT_PORT"
 description = "Run the host tests (core/ Unity tests in the native env, then the build scripts' Python tests); no board needed"
 run = '''
 pio test -d firmware -e native || exit 1
-cd firmware/scripts && python -m unittest -v test_check_image
+cd firmware/scripts && python -m unittest -v test_check_image || exit 1
+cd ../.. && python -m unittest discover -v -s tools -p 'test_*.py'
 '''
+
+# motion-playback: the stock motion tables, generated from the stock image.
+[tasks.extract-motions]
+description = "Regenerate core/motion/stock_motions.h from baseline/original-flash-4MB.bin (checks the image hash first)"
+run = "python -I tools/extract_motions.py"
+
+[tasks.check-motions]
+description = "Re-extract the stock motion tables in memory and fail, naming the motion and keyframe, when core/motion/stock_motions.h differs"
+run = "python -I tools/extract_motions.py --check"
+
 # MiniSpooder.pak (handheld/, a Go module with SDL2 and gabagool): the
 # TrimUI Smart Pro remote. Every task that compiles the pak builds against
 # the patched gabagool in build/handheld/gabagool (handheld-fork).

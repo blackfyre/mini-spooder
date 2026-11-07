@@ -53,6 +53,8 @@ mise run upload       # build and check, then write the image to $ROBOT_PORT onl
 mise run backup       # read the full flash to build/flash-<timestamp>.bin (read-only)
 mise run restore      # hash-check baseline/original-flash-4MB.bin, then write it to the robot
 mise run monitor      # serial console at 115200 baud
+mise run extract-motions  # regenerate core/motion/stock_motions.h from the stock image (hash-checked)
+mise run check-motions    # fail, naming the motion and keyframe, when that header and the image differ
 mise exec -- sh -c 'esptool --port "$ROBOT_PORT" chip-id'   # identify the board
 ```
 
@@ -62,6 +64,7 @@ The stock bootloader prints its ROM output at 74880 baud.
 
 - `firmware/`: the PlatformIO project. `platformio.ini` has the envs `robot` (the normal image), `robot-check` (the normal image plus the check console, defines `MINI_SPOODER_CHECK_BUILD`) and `native` (host tests). `src/` holds the Arduino code (`main.cpp`, `servo_driver.*`, `calibration_store.*`, `diag.*`, and `check_console.*`, which only `robot-check` compiles). `scripts/` holds `version.py` (the build's `git describe` version) and `check_image.py` with its tests.
 - `core/`: the hardware-free library (no Arduino headers), linked into every env. Every `.cpp` under `core/` is compiled without a source list, except `core/test/` (Unity tests, one directory per test, and `fixtures/`) and `core/fuzz/` (executables with their own entry point, such as fuzz targets, which are never in the library or an image; a test may include one of their sources explicitly).
+- **Motions** (motion-playback): `core/motion/` holds the keyframe format, the generated stock tables, the player and its gate adapter; `firmware/src/motion_service.*` ticks it in the loop and gives drive-link (`link`) and web-portal (`portal`) their bindings. The `motion-demo` env (`-DMOTION_DEMO`, a check build) plays every motion after `go` on the serial console; `tools/check_motion_log.py` checks its log; `docs/stock-motions.md` has the evidence and the on-robot steps.
 - **Image:** `mise run build` writes the flashable normal image to `firmware/.pio/build/robot/firmware.bin` (ELF beside it). The check build's image is `firmware/.pio/build/robot-check/firmware.bin`.
 - **Diagnostics:** after every reset the firmware prints, at 115200 baud on UART0, `mini-spooder <version>`, `reset <cause>` (with `exccause` and `epc1` after an exception or a watchdog), the calibration line (`calibration ok <t0> … <t7>` or `calibration fault …`), and then one `mode <mode> <reason>` line per output-mode change. Stock's 9600-baud banner is not reproduced.
 
