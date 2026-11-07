@@ -9,6 +9,8 @@
 #include "diag.h"
 #include "motion_service.h"  // motion-playback: the motion player
 #include "drive_link.h"  // drive-link: access point, UDP drive port, session report
+// web-portal: the HTTP portal on port 80.
+#include "portal.h"
 #include "servo/output_gate.h"
 #include "servo/servo_bank.h"
 #include "servo_driver.h"
@@ -79,6 +81,8 @@ void setup() {
 
   // drive-link: the access point and the drive port (no output change).
   drive_link_glue::begin(outputGate);
+  // web-portal: start the HTTP server (after the output gate exists).
+  portal::begin(outputGate, calibration);
 
   diag::flush();
 }
@@ -92,6 +96,10 @@ void loop() {
   drive_link_glue::receive();
 
   // Later changes add their poll services here (design D4).
+
+  // web-portal: serve HTTP requests that have arrived (never waits for a motion).
+  portal::poll(nowMs);
+
 #ifdef MINI_SPOODER_CHECK_CONSOLE
   console.poll(nowMs);
 #endif

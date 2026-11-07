@@ -1,0 +1,6 @@
+{
+  "comment": "An external stylesheet link.",
+  "page": "controller",
+  "replace": ["</title>", "</title>\n<link rel=stylesheet href=\"https://example.com/portal.css\">"],
+  "expect": "external"
+}

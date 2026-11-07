@@ -1,0 +1,50 @@
+{{head:Motion editor}}
+<body><main>
+{{nav:editor}}
+<p class=kicker>Motion editor</p>
+<h1>Spider Robot<i>.</i></h1>
+<div class=card id=editor>
+<div class=grid2>
+<div class="servo g-a"><span class=lbl>{{label:4}}</span><span class=hint>Default 110</span><div class=ends><span>135</span><input type=range id=range_4 min=45 max=135 value=110 dir=rtl aria-label="{{label:4}} slider" data-servo=4><span>45</span></div><div class=row><input type=text id=servo_4 value=110 autocomplete=off aria-label="{{label:4}} angle"><button type=button data-send=4>Send</button></div></div>
+<div class="servo g-a"><span class=lbl>{{label:0}}</span><span class=hint>Default 70</span><div class=ends><span>135</span><input type=range id=range_0 min=45 max=135 value=70 dir=rtl aria-label="{{label:0}} slider" data-servo=0><span>45</span></div><div class=row><input type=text id=servo_0 value=70 autocomplete=off aria-label="{{label:0}} angle"><button type=button data-send=0>Send</button></div></div>
+<div class="servo g-b"><span class=lbl>{{label:5}}</span><span class=hint>Default 90</span><div class=ends><span>135</span><input type=range id=range_5 min=45 max=135 value=90 dir=rtl aria-label="{{label:5}} slider" data-servo=5><span>45</span></div><div class=row><input type=text id=servo_5 value=90 autocomplete=off aria-label="{{label:5}} angle"><button type=button data-send=5>Send</button></div></div>
+<div class="servo g-b"><span class=lbl>{{label:1}}</span><span class=hint>Default 90</span><div class=ends><span>135</span><input type=range id=range_1 min=45 max=135 value=90 dir=rtl aria-label="{{label:1}} slider" data-servo=1><span>45</span></div><div class=row><input type=text id=servo_1 value=90 autocomplete=off aria-label="{{label:1}} angle"><button type=button data-send=1>Send</button></div></div>
+<div class="servo g-b"><span class=lbl>{{label:6}}</span><span class=hint>Default 90</span><div class=ends><span>45</span><input type=range id=range_6 min=45 max=135 value=90 aria-label="{{label:6}} slider" data-servo=6><span>135</span></div><div class=row><input type=text id=servo_6 value=90 autocomplete=off aria-label="{{label:6}} angle"><button type=button data-send=6>Send</button></div></div>
+<div class="servo g-b"><span class=lbl>{{label:2}}</span><span class=hint>Default 90</span><div class=ends><span>45</span><input type=range id=range_2 min=45 max=135 value=90 aria-label="{{label:2}} slider" data-servo=2><span>135</span></div><div class=row><input type=text id=servo_2 value=90 autocomplete=off aria-label="{{label:2}} angle"><button type=button data-send=2>Send</button></div></div>
+<div class="servo g-a"><span class=lbl>{{label:7}}</span><span class=hint>Default 70</span><div class=ends><span>45</span><input type=range id=range_7 min=45 max=135 value=70 aria-label="{{label:7}} slider" data-servo=7><span>135</span></div><div class=row><input type=text id=servo_7 value=70 autocomplete=off aria-label="{{label:7}} angle"><button type=button data-send=7>Send</button></div></div>
+<div class="servo g-a"><span class=lbl>{{label:3}}</span><span class=hint>Default 110</span><div class=ends><span>45</span><input type=range id=range_3 min=45 max=135 value=110 aria-label="{{label:3}} slider" data-servo=3><span>135</span></div><div class=row><input type=text id=servo_3 value=110 autocomplete=off aria-label="{{label:3}} angle"><button type=button data-send=3>Send</button></div></div>
+<div class=full><span class=lbl>Action code</span><output id=actionCode class=code></output></div>
+<div class=full><button type=button class=accent data-pm=1>Standby</button></div>
+</div>
+</div>
+{{status}}
+</main>
+<script>{{script}}
+// The eight field values in servo order 0-7.
+function actionCode(){
+  var v=[];
+  for(var i=0;i<8;i++)v.push($('servo_'+i).value);
+  $('actionCode').value=v.join(', ');
+}
+function servo(i,value){
+  send('controller?servo='+i+'&value='+encodeURIComponent(value),'S'+i+' to '+value);
+}
+for(var i=0;i<8;i++)(function(i){
+  // Releasing a slider copies its value to the field and sends it.
+  $('range_'+i).onchange=function(){$('servo_'+i).value=this.value;actionCode();servo(i,this.value)};
+  $('servo_'+i).oninput=actionCode;
+})(i);
+$('editor').onclick=function(e){
+  var b=e.target.closest('button');
+  if(!b)return;
+  if(b.dataset.send!==undefined){
+    // Send: the field's text unchanged; the slider shows it limited to 45-135.
+    var i=b.dataset.send,v=$('servo_'+i).value;
+    $('range_'+i).value=v;
+    actionCode();
+    servo(i,v);
+  }else control(e);
+};
+actionCode();
+</script>
+</body></html>

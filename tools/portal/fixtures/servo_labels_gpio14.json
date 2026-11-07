@@ -1,0 +1,5 @@
+{
+  "comment": "A label table with GPIO14 for servo 0 (the stock pages' D14), which is not servo-output's pin map.",
+  "gpio": [14, 13, 12, 14, 2, 4, 5, 16],
+  "expect": "labels"
+}
