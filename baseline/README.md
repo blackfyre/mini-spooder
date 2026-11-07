@@ -32,16 +32,19 @@ Restore the original firmware with `mise run restore`.
 | 0x000000–0x000FFF | `eboot` bootloader (Arduino ESP8266 core); prints `v39c79d9b` at 74880 baud |
 | 0x001000–0x04DFFF | Application, about 308 KB |
 | 0x04E000–0x3FBFFF | Erased; no filesystem in use |
-| 0x3FB000–0x3FBFFF | EEPROM emulation sector: erased, so no calibration has been saved |
+| 0x3FB000–0x3FBFFF | EEPROM emulation sector: calibration trims in bytes 0–7; erased, so no calibration has been saved |
 | 0x3FC000–0x3FFFFF | SDK data: RF calibration and Wi-Fi configuration |
 
 The SDK Wi-Fi configuration holds the access point `Spider Robot` with password `12345678`, and the station hostname `ESP-640E26`. The SDK version string is `2.2.2-dev(38a443e)`.
 
 ## Firmware behaviour
 
-- **Build:** Arduino ESP8266 core. The boot banner is `Q1 mini Start!`.
-- **Serial:** nothing readable after boot at 115200 baud.
-- **Network:** soft access point `Spider Robot` with a DNS server for the captive portal. The `.local` string suggests mDNS (unconfirmed).
+Corrected after the disassembly in `docs/lafvin-comparison.md`, which has the evidence (flash offsets) for each point below.
+
+- **Build:** Arduino ESP8266 core, probably close to release 2.7.4 (inferred from the Servo library code). The boot banner is `Q1 mini Start!`.
+- **Serial:** 9600 baud. The firmware prints the banner at boot and nothing else; this is why nothing was readable at 115200.
+- **Network:** soft access point `Spider Robot`, password `12345678`, no explicit IP configuration, so presumably the SDK default 192.168.4.1 (not measured). It is **not** a captive portal: no DNS server or mDNS is started.
+- **Motions:** each `pm` request plays its table once, then stops. While a motion plays, the firmware does not serve HTTP, so a motion can't be interrupted.
 
 ### HTTP routes
 
@@ -49,15 +52,15 @@ The SDK Wi-Fi configuration holds the access point `Spider Robot` with password 
 |---|---|
 | `/` | Controller page (assumed: too short to appear in the strings) |
 | `/controller?pm=<n>` | Run motion `n` |
-| `/controller?pms=<n>` | Variant of `pm`; purpose unknown |
-| `/controller?servo=<i>&value=<deg>` | Move servo `i` to an angle |
-| `/save?key=<i>&value=<v>` | Save a servo calibration; `key=100` resets all |
-| `/editor` | Motion editor page |
+| `/controller?pms=<n>` | Not handled: the page's JavaScript sends it, but the handler reads only `pm`, `servo` and `value` |
+| `/controller?servo=<i>&value=<deg>` | Move servo `i` to an angle, immediately |
+| `/save?key=<i>&value=<v>` | Save servo `i`'s calibration trim; `key=100` resets all (its page button is commented out) |
+| `/editor` | Motion editor page: eight sliders (45–135°) and a generated comma-separated keyframe |
 | `/zero` | Zero check page |
 | `/setting` | Servo calibration page |
-| `/online` | Unknown |
+| `/online?m0=…&m7=&t1=` | Plays one keyframe: eight angles over `t1` ms (used by the motion editor) |
 
-The route list comes from the strings. How each handler behaves is inferred from the page JavaScript, not from disassembly.
+Every route is registered for GET. Unknown `pm` values are accepted and ignored.
 
 ### Motions (`pm` values)
 
@@ -76,24 +79,31 @@ The route list comes from the strings. How each handler behaves is inferred from
 | 11 | Push up |
 | 12 | Sleep |
 | 13–15 | Dance 1–3 |
+| 99 | Centre: on stock the same pose as zero (no button) |
 | 100 | Zero position |
+
+The keyframe tables are in the application image (flash 0x3FC9C–0x40DE7): each keyframe is eight angles plus a duration in milliseconds, interpolated in 10 ms steps. Say Hi ends with Standby, and Sleep starts with Standby. `docs/lafvin-motions.md` lists every keyframe.
 
 ### Servo map
 
-The calibration page labels each servo index with its GPIO.
+The pages' labels and the GPIO each servo index is actually attached to disagree, and stock changes the mapping after a save:
 
-| Servo index | GPIO | Default angle in page | Page group |
-|---|---|---|---|
-| 0 | 14 | 70 | yellow |
-| 1 | 12 | 90 | blue |
-| 2 | 13 | 90 | blue |
-| 3 | 15 | 110 | yellow |
-| 4 | 16 | 110 | yellow |
-| 5 | 5 | 90 | blue |
-| 6 | 4 | 90 | blue |
-| 7 | 2 | 70 | yellow |
+| Servo index | GPIO in page labels | GPIO at startup | GPIO after any `/save` | Default angle in page | Page group |
+|---|---|---|---|---|---|
+| 0 | 14 | 15 | 16 | 70 | yellow |
+| 1 | 12 | 13 | 5 | 90 | blue |
+| 2 | 13 | 12 | 4 | 90 | blue |
+| 3 | 15 | 14 | 2 | 110 | yellow |
+| 4 | 16 | 2 | 14 | 110 | yellow |
+| 5 | 5 | 4 | 12 | 90 | blue |
+| 6 | 4 | 5 | 13 | 90 | blue |
+| 7 | 2 | 16 | 15 | 70 | yellow |
 
-The two colour groups probably separate the hip and knee joints. Which servo sits on which leg is not yet confirmed on the hardware. Sliders range from 45° to 135°.
+The startup and after-save columns come from the disassembled attach calls. The after-save remapping, which happens even for an invalid save, is a stock defect. The vendor (LAFVIN) source always uses 14, 12, 13, 15, 16, 5, 4, 2, which is the label column. Which GPIO drives which joint on this robot is **not yet confirmed on the hardware**. The two colour groups probably separate the hip and knee joints.
+
+### Calibration
+
+Calibration is real. It stores one signed byte per servo index (a trim added to every angle) in EEPROM bytes 0–7, in the 512-byte EEPROM emulation sector at 0x3FB000. In the dump that sector is erased, so every trim currently reads as −1. Angles pass through a 1–180 to 400–2400 µs conversion.
 
 Hardware note: GPIO15 (must be low at boot) and GPIO2 (must be high at boot) are boot-strapping pins, so their servos may twitch at reset. GPIO2 also drives the module's blue LED on most ESP-12 boards.
 
