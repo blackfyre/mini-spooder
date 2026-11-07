@@ -98,7 +98,7 @@ Within a session, the robot SHALL make exactly one request for each change of th
 The first accepted frame of a session SHALL only set the baseline of the motion-request counter, so that a remote that restarts, whose counter starts again, makes no request.
 
 #### Scenario: Request a motion while idle
-- **WHEN** motion playback is idle, servo output is not in its fault mode, and within a session a frame arrives whose counter is one higher than the previous accepted frame's and whose requested motion is 2 (Forward)
+- **WHEN** motion playback is idle, servo output is active or would accept an enable request from the drive link now, and within a session a frame arrives whose counter is one higher than the previous accepted frame's and whose requested motion is 2 (Forward)
 - **THEN** the robot requests Forward from motion playback once, and the next telemetry frame reports the request as accepted and motion 2 as playing
 
 #### Scenario: Request a motion while another plays
@@ -144,11 +144,19 @@ Within a session, with d the difference between a frame's sequence number and th
 - **THEN** the robot discards it and ends the session with the link-loss failsafe, and the next valid frame starts a new session that only sets the counter baseline
 
 ### Requirement: One remote at a time
-The robot SHALL lock to the sender, by IPv4 address and UDP port, of the first accepted frame of a session. While that session is live, the robot SHALL discard datagrams from every other sender without decoding them, count them as from another sender, and not charge them to the rate budget. After the session ends, the sender of the next valid command frame SHALL start a new session and become the locked sender. The robot SHALL report to the rest of the firmware whether a session is live.
+The robot SHALL lock to the sender, by IPv4 address and UDP port, of the first accepted frame of a session. While that session is live, the robot SHALL discard datagrams from every other sender without decoding them, count them as from another sender, and not charge them to the rate budget. After the session ends, the sender of the next valid command frame SHALL start a new session and become the locked sender. The robot SHALL report to the rest of the firmware whether a session is live, and SHALL report each session's start and each session's end in the loop pass in which it happens, before motion playback is serviced in that pass, in the order in which the datagrams that cause them are read. When a datagram read after a lapse both ends the lapsed session and starts the next one, the robot SHALL apply the ended session's link-loss failsafe and report its end before it reports the new session's start, so that the firmware sees the new session as started after the failsafe.
 
 #### Scenario: Second sender ignored
 - **WHEN** a second station sends valid command frames with changing counters while the locked remote's session is live
 - **THEN** the robot makes no request for them, counts them as from another sender, and keeps following the locked remote
+
+#### Scenario: Lapse and new session in one pass
+- **WHEN** the locked remote's last accepted frame was read 301 ms ago, no loop pass has detected the lapse yet, and in the next pass a valid command frame from any sender is read
+- **THEN** in that pass the robot applies the failsafe and reports the session's end, then reports the new session's start, and the new frame only sets the counter baseline
+
+#### Scenario: Session starts and ends in one pass
+- **WHEN** no session is live, and in one loop pass the robot reads a valid command frame that starts a session and then a frame from the same sender whose sequence jump ends it
+- **THEN** the robot reports the session's start, then applies the failsafe and reports its end, and after that pass reports no live session
 
 #### Scenario: Handover after a lapse
 - **WHEN** the locked remote stops sending for longer than 300 ms and another station then sends valid command frames
@@ -231,7 +239,7 @@ While a session is live, the robot SHALL send a telemetry frame every 100 ms fro
 The counts SHALL run from boot and wrap from 65535 to 0.
 
 #### Scenario: Telemetry after a request
-- **WHEN** motion playback is idle, servo output is not in its fault mode, and the remote requests Say Hi with counter value 7
+- **WHEN** motion playback is idle, servo output is active or would accept an enable request from the drive link now, and the remote requests Say Hi with counter value 7
 - **THEN** the next telemetry frame reports counter 7, result accepted and motion 9 playing
 
 #### Scenario: Round-trip time
@@ -239,11 +247,11 @@ The counts SHALL run from boot and wrap from 65535 to 0.
 - **THEN** U − T − A is the round-trip time of the link, to within one robot loop pass
 
 #### Scenario: Request refused by servo output
-- **WHEN** servo output is in its fault mode and the remote requests Forward with a changed counter
-- **THEN** the next telemetry frame reports the request as accepted, if motion playback accepted it, and reports the current and pending motion that motion playback then reports, not motion 2 playing
+- **WHEN** servo output is not active and would not accept an enable request from the drive link now, for example in its fault mode, or in its safe state while the live session started before output was last disabled, and the remote requests Forward with a changed counter
+- **THEN** the drive link makes no call to servo output to enable it, and the next telemetry frame reports the result that motion playback gave the request, and the current and pending motion that motion playback reports after servo output's refusal
 
 #### Scenario: Request in the pass of a due frame
-- **WHEN** motion playback is idle, servo output is not in its fault mode, and in the loop pass in which a telemetry frame is due the robot accepts a frame that requests Forward with a changed counter
+- **WHEN** motion playback is idle, servo output is active or would accept an enable request from the drive link now, and in the loop pass in which a telemetry frame is due the robot accepts a frame that requests Forward with a changed counter
 - **THEN** that pass's telemetry frame reports motion 2 as playing, not motion 0
 
 #### Scenario: Telemetry reports link statistics
@@ -259,11 +267,11 @@ The counts SHALL run from boot and wrap from 65535 to 0.
 - **THEN** the robot sends no datagrams from the drive port
 
 ### Requirement: Coexistence with the web portal
-The drive link and the web portal SHALL share the access point. The web portal SHALL keep answering on 192.168.4.1 while a session is live, and the drive port SHALL keep working while web portal pages load. The drive link SHALL NOT refuse, undo or replay a web portal request: a frame with an unchanged motion-request counter makes no request (Command frames). How the web portal handles its own requests during a session is the web portal's rule. When the session ends, the link-loss failsafe SHALL apply to whatever the robot was doing, whichever source started it.
+The drive link and the web portal SHALL share the access point. The drive port SHALL keep working while web portal pages load: the session SHALL stay live and its telemetry SHALL keep its schedule. The drive link SHALL NOT refuse, undo or replay a web portal request: a frame with an unchanged motion-request counter makes no request (Command frames). How the web portal handles its own requests during a session is the web portal's rule. When the session ends, the link-loss failsafe SHALL apply to whatever the robot was doing, whichever source started it.
 
 #### Scenario: Pages load while driving
 - **WHEN** a phone loads the web portal's pages while the remote sends its frames every 50 ms
-- **THEN** the pages load and the remote's session stays live
+- **THEN** the remote's session stays live, no failsafe occurs, and telemetry frames keep arriving every 100 ms
 
 #### Scenario: Portal motion during a session
 - **WHEN** a session is live with an unchanged motion-request counter, and motion playback plays a motion that the web portal requested
