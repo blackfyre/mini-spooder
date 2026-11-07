@@ -1,0 +1,6 @@
+{
+  "comment": "A wrong data-value: the S0 zero-check button sends 45 instead of 135.",
+  "page": "zero",
+  "replace": ["data-servo=0 data-value=135", "data-servo=0 data-value=45"],
+  "expect": "controls"
+}

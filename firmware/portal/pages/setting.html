@@ -1,0 +1,36 @@
+{{head:Servo calibration}}
+<body><main>
+{{nav:setting}}
+<p class=kicker>Servo calibration</p>
+<h1>Spider Robot<i>.</i></h1>
+<div class=card id=trims>
+<p class=hint>Trim in degrees, added to every angle of that servo.</p>
+<div class=grid2>
+<div class="servo g-a"><label for=servo_4>{{label:4}}</label><div class=row><input type=text id=servo_4 value="{{OFF4}}" autocomplete=off><button type=button data-key=4>Set</button></div></div>
+<div class="servo g-a"><label for=servo_0>{{label:0}}</label><div class=row><input type=text id=servo_0 value="{{OFF0}}" autocomplete=off><button type=button data-key=0>Set</button></div></div>
+<div class="servo g-b"><label for=servo_5>{{label:5}}</label><div class=row><input type=text id=servo_5 value="{{OFF5}}" autocomplete=off><button type=button data-key=5>Set</button></div></div>
+<div class="servo g-b"><label for=servo_1>{{label:1}}</label><div class=row><input type=text id=servo_1 value="{{OFF1}}" autocomplete=off><button type=button data-key=1>Set</button></div></div>
+<div class="servo g-b"><label for=servo_6>{{label:6}}</label><div class=row><input type=text id=servo_6 value="{{OFF6}}" autocomplete=off><button type=button data-key=6>Set</button></div></div>
+<div class="servo g-b"><label for=servo_2>{{label:2}}</label><div class=row><input type=text id=servo_2 value="{{OFF2}}" autocomplete=off><button type=button data-key=2>Set</button></div></div>
+<div class="servo g-a"><label for=servo_7>{{label:7}}</label><div class=row><input type=text id=servo_7 value="{{OFF7}}" autocomplete=off><button type=button data-key=7>Set</button></div></div>
+<div class="servo g-a"><label for=servo_3>{{label:3}}</label><div class=row><input type=text id=servo_3 value="{{OFF3}}" autocomplete=off><button type=button data-key=3>Set</button></div></div>
+<div class=full><button type=button class=accent data-key=100>Reset all</button></div>
+</div>
+</div>
+{{status}}
+</main>
+<script>{{script}}
+$('trims').onclick=function(e){
+  var b=e.target.closest('button');
+  if(!b||b.dataset.key===undefined)return;
+  var k=b.dataset.key;
+  if(k=='100'){
+    for(var i=0;i<8;i++)$('servo_'+i).value='0';
+    send('save?key=100&value=0','Reset all');
+  }else{
+    var v=$('servo_'+k).value;
+    send('save?key='+k+'&value='+encodeURIComponent(v),'Set S'+k+' to '+v);
+  }
+};
+</script>
+</body></html>

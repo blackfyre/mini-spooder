@@ -1,0 +1,6 @@
+{
+  "comment": "A wrong token value: bf-paper differs from its Paper value.",
+  "page": "zero",
+  "replace": ["--bf-paper:#e6e4df", "--bf-paper:#e6e4e0"],
+  "expect": "token"
+}

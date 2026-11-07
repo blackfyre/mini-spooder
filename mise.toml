@@ -62,6 +62,20 @@ run = '''
 pio test -d firmware -e native || exit 1
 cd firmware/scripts && python -m unittest -v test_check_image
 '''
+
+# web-portal: the portal's pages, generated from firmware/portal/ (the build's
+# pre: script runs the same generator into the build directory).
+[tasks.portal-gen]
+description = "Generate the web portal's pages to build/portal/ (portal_pages.h and pages/*.html)"
+run = "python -I tools/portal/gen_pages.py --out build/portal"
+
+[tasks.portal-check]
+description = "Generate the portal's pages, check them (tokens, external references, stock controls, pin map), then run the generator's and check's tests"
+run = '''
+python -I tools/portal/gen_pages.py --out build/portal || exit 1
+python -I tools/portal/check_pages.py --pages build/portal/pages || exit 1
+python -I tools/portal/test_portal_pages.py
+'''
 # MiniSpooder.pak (handheld/, a Go module with SDL2 and gabagool): the
 # TrimUI Smart Pro remote. Every task that compiles the pak builds against
 # the patched gabagool in build/handheld/gabagool (handheld-fork).

@@ -1,0 +1,4 @@
+{
+  "comment": "GPIO per servo index 0-7, as servo-output attaches them (firmware/src/servo_driver.cpp kServoPins). The portal labels each servo S<i> · GPIO<g>; mise run portal-check compares this table with kServoPins.",
+  "gpio": [15, 13, 12, 14, 2, 4, 5, 16]
+}
