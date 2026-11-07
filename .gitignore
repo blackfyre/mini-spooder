@@ -5,3 +5,5 @@ references/lafvin/
 # Delivery worktrees (one per OpenSpec change) and the CodeGraph index.
 .claude/worktrees/
 .codegraph/
+# The pak's device build files (Containerfile), not build output.
+!/handheld/build/

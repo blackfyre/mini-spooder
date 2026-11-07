@@ -1,0 +1,35 @@
+# MiniSpooder.pak's device build (openspec change handheld-pak, design D12):
+# linux/arm64 with glibc 2.31 (bullseye), at most the TrimUI's 2.33, so
+# the binary needs no newer GLIBC symbol version. Built and run under rootless
+# Podman with qemu-user-static by `mise run handheld-build-device`.
+#
+# Pinned: the base image by digest (the multi-arch index of
+# debian:bullseye-slim on 2026-08-24), the Debian packages by a
+# snapshot.debian.org date, and Go by version and SHA-256. GO_VERSION must be
+# mise.toml's go pin; the task checks it.
+FROM --platform=linux/arm64 docker.io/library/debian:bullseye-slim@sha256:e5b6442dd2e9684cf5e87d8338b5968f3b348636fc0be6d7850a381e3731a2bd
+
+ARG SNAPSHOT=20260824T000000Z
+ARG GO_VERSION=1.27.1
+ARG GO_SHA256=3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec
+
+RUN printf '%s\n' \
+      "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${SNAPSHOT} bullseye main" \
+      "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${SNAPSHOT} bullseye-updates main" \
+      "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/${SNAPSHOT} bullseye-security main" \
+      > /etc/apt/sources.list \
+ && rm -f /etc/apt/sources.list.d/* \
+ && apt-get -o Acquire::Retries=5 update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates curl gcc libc6-dev pkg-config \
+      libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev libsdl2-gfx-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSLo /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz" \
+ && echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum -c - \
+ && tar -C /usr/local -xzf /tmp/go.tar.gz \
+ && rm /tmp/go.tar.gz
+
+ENV PATH=/usr/local/go/bin:$PATH \
+    GOTOOLCHAIN=local \
+    CGO_ENABLED=1
