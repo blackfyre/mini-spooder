@@ -60,9 +60,24 @@ The firmware SHALL NOT drive any servo before these lines are printed. The stock
 
 ### Requirement: Non-blocking main loop
 
-The firmware SHALL run as one cooperative main loop. Each service SHALL be a poll function that `main.cpp` calls on every pass with the current `millis()` time. Services include servo output, calibration, and the services that later changes add (link receive and failsafe, keyframe player, web server). A service SHALL do only the work that is due, and SHALL time its periodic work by advancing its deadline by its interval, not by the time it ran. No service SHALL call `delay()` or wait for a condition. `loop()` SHALL return to the core after every pass so that the Wi-Fi stack runs.
+The firmware SHALL run as one cooperative main loop. Each service SHALL be a poll function that `main.cpp` calls on every pass with the current `millis()` time. Services include servo output, calibration, and the services that later changes add (link receive and failsafe, keyframe player, web server). A service SHALL do only the work that is due. Unless the service's own specification sets another rule, periodic work with interval `I` SHALL be timed as follows: when work due at `D` runs at time `t`, the next deadline SHALL be `D + I` when the elapsed time `t − D` is less than `I`, so that jitter of less than one interval does not accumulate, and otherwise `t + I`, so that missed intervals are not made up. Times, deadlines and `t − D` SHALL be computed modulo 2³², so that the rule holds across the `millis()` wrap. A service SHALL run its periodic work at most once per pass. No service SHALL call `delay()` or wait for a condition. `loop()` SHALL return to the core after every pass so that the Wi-Fi stack runs.
 
 The loop budget SHALL be: every pass, with all services together, takes at most 20 ms. The only exception SHALL be a pass that commits calibration to flash (servo-calibration). The firmware SHALL record the longest pass since start-up, the number of passes over 20 ms that did not commit calibration, and the longest calibration-commit pass, and SHALL make these available to the rest of the firmware. Each 40 ms deadline of servo-output and servo-calibration SHALL be extended by the length of any calibration-commit pass that runs within it; no other pass extends it.
+
+#### Scenario: Slightly late periodic work
+
+- **WHEN** periodic work with a 10 ms interval is due at 10 ms and runs at 15 ms
+- **THEN** its next deadline is 20 ms
+
+#### Scenario: Missed intervals not made up
+
+- **WHEN** periodic work with a 10 ms interval is due at 10 ms and runs at 60 ms
+- **THEN** it runs once in that pass and its next deadline is 70 ms
+
+#### Scenario: Periodic work across the wrap
+
+- **WHEN** periodic work with a 10 ms interval is due at 0xFFFFFFFA ms and runs at 0xFFFFFFFC ms
+- **THEN** its next deadline is 4 ms (0xFFFFFFFA + 10 modulo 2³²)
 
 #### Scenario: Release within the budget
 
@@ -95,7 +110,7 @@ The loop budget SHALL be: every pass, with all services together, takes at most 
 
 ### Requirement: Host tests
 
-`mise run test` SHALL compile the `core/` library for the host and run the Unity tests in `core/test/` in a PlatformIO native env. It SHALL need neither a robot nor the ESP8266 toolchain. It SHALL fail when any test fails or any library source fails to compile. The library SHALL consist of every C++ source under `core/` except those under `core/test/` and `core/fuzz/`, compiled without a source list, in both the native env and the robot env. Sources under `core/fuzz/` (fuzz targets and other executables with their own entry point) SHALL be compiled by neither env. The library sources SHALL compile with all warnings enabled and treated as errors, and SHALL build without the Arduino core, so that a library source that includes an Arduino or ESP8266 header fails `mise run test`.
+`mise run test` SHALL compile the `core/` library for the host and run the Unity tests in `core/test/` in a PlatformIO native env. It SHALL need neither a robot nor the ESP8266 toolchain. It SHALL fail when any test fails or any library source fails to compile. The library SHALL consist of every C++ source under `core/` except those under `core/test/` and `core/fuzz/`, compiled without a source list, in both the native env and the robot env. Sources under `core/fuzz/` (fuzz targets and other executables with their own entry point, and their helpers) SHALL NOT be part of the library and SHALL NOT be compiled into any firmware image. A host test under `core/test/` MAY compile a named source under `core/fuzz/` into its own test programme explicitly (for example by including it); that source then compiles with the test's settings in that test programme only. The library sources SHALL compile with all warnings enabled and treated as errors, and SHALL build without the Arduino core, so that a library source that includes an Arduino or ESP8266 header fails `mise run test`.
 
 #### Scenario: Failing test
 
@@ -115,11 +130,11 @@ The loop budget SHALL be: every pass, with all services together, takes at most 
 #### Scenario: Fuzz targets kept out of the library
 
 - **WHEN** two files under `core/fuzz/` each define `LLVMFuzzerTestOneInput`, and one also defines `main`
-- **THEN** `mise run test` and `mise run build` both succeed, and neither the robot image nor the native test programme contains those symbols
+- **THEN** `mise run test` and `mise run build` both succeed, and neither the robot image nor any native test programme that does not include those files explicitly contains those symbols
 
 ### Requirement: Check build
 
-A third PlatformIO env, `robot-check`, SHALL build the normal firmware plus a line-based command console on UART0 at 115200 baud, for the hardware checks only. The console SHALL call the same servo-output and servo-calibration operations as the rest of the firmware, with no other access to the pins or the sector. It SHALL offer at least these commands:
+A third PlatformIO env, `robot-check`, SHALL build the normal firmware plus a line-based command console on UART0 at 115200 baud, for the hardware checks only. It SHALL define `MINI_SPOODER_CHECK_BUILD`, the marker of a firmware built for on-robot checks, which permits the enable origin `check` (servo-output). A later change MAY add its own env for its on-robot checks that defines the same marker. The env that `mise run build` builds SHALL NOT define it. The console SHALL call the same servo-output and servo-calibration operations as the rest of the firmware, with no other access to the pins or the sector. It SHALL offer at least these commands:
 
 - enable with a complete pose;
 - a pose or a single servo with the current token;

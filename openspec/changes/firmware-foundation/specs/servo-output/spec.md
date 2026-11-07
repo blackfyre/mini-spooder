@@ -74,8 +74,9 @@ The firmware SHALL be in exactly one of four output modes:
 
 The firmware SHALL drive servos only in `active`.
 
-- **Entering `active`:** an accepted enable request (Enabling output), which carries a complete pose (one commanded angle for each of the eight servos), SHALL move `idle` or `safe` to `active`, with every servo driven at that pose. In `active`, an enable request from any origin SHALL apply the pose. An enable request SHALL be rejected in `fault`.
+- **Entering `active`:** an accepted enable request (Enabling output), which carries a complete pose (one commanded angle for each of the eight servos), SHALL move `idle` or `safe` to `active`, with every servo driven at that pose. In `active`, an enable request from any permitted origin (Enabling output) SHALL apply the pose. An enable request SHALL be rejected in `fault`.
 - **Writer token:** each accepted enable request SHALL return the current writer token. A pose or single-servo command SHALL be accepted only in `active` and only with the current token. Otherwise it SHALL be rejected and SHALL change no output.
+- **Direct servo command:** servo-output SHALL also offer a single-servo command that carries no token, for a new, explicit request to move one servo (the web portal's direct servo command). It SHALL be accepted only in `active`, SHALL apply as a single-servo command with the current token would, and SHALL NOT make an enable request or change the token. In any other mode it SHALL be rejected and SHALL change no output. A writer that continues a sequence of its own (motion-playback) SHALL use the token that its enable request returned, not this command.
 - **Safe-state request:** from any mode, a safe-state request carrying a reason (`link-loss` from the drive link, or `check` from the check build's console) SHALL move `idle` or `active` to `safe` at once, in the same loop pass. It SHALL record the reason, release every servo (Release), and make the current token stale. A safe-state request in `safe` or `fault` SHALL change nothing except to update the recorded reason in `safe`.
 - **Calibration fault:** a calibration fault (servo-calibration) SHALL move any mode to `fault`, release every servo, and make the token stale. `fault` SHALL change to `safe` only when servo-calibration reports that every trim is valid.
 - **No other transitions:** the firmware SHALL NOT enter `active` on its own: not at boot, not after a fault clears, and not after a safe state.
@@ -123,6 +124,11 @@ stateDiagram-v2
 - **WHEN** output enters `safe`, a second caller then enables output with an accepted enable request, and the first writer then sends a pose with its old token
 - **THEN** the first writer's pose is rejected and the servos hold the second caller's pose
 
+#### Scenario: Direct servo command without a token
+
+- **WHEN** output was enabled by motion-playback's enable request, and the web portal then sends a direct servo command for servo 3 at 80°
+- **THEN** the command is accepted, servo 3 is driven at 80° plus its trim within its safe range, the mode stays `active`, and the token that motion-playback holds is still current
+
 #### Scenario: Enable refused in fault
 
 - **WHEN** the mode is `fault` and an enable request with origin `portal` and a complete pose is given while no drive-link session is live
@@ -130,7 +136,7 @@ stateDiagram-v2
 
 ### Requirement: Enabling output
 
-Output SHALL be enabled from `idle` or `safe` only on behalf of an explicit request to play a motion or a keyframe (motion-playback), or by the check build's `enable` command, which stands in for such a request in the hardware checks. A stop, a direct servo command, a calibration change, the start or end of a drive-link session, and a mode change SHALL NOT make an enable request. Each enable request SHALL name its origin: `link` (a motion request from the drive link), `portal` (a motion or keyframe request from the web portal) or `check` (the check build's console). In `idle` or `safe`, an enable request SHALL be accepted only in one of these cases:
+Output SHALL be enabled from `idle` or `safe` only on behalf of an explicit request to play a motion or a keyframe (motion-playback), or on behalf of a command of a build made for the on-robot checks (origin `check`). A stop, a direct servo command, a calibration change, the start or end of a drive-link session, and a mode change SHALL NOT make an enable request. Each enable request SHALL name its origin: `link` (a motion request from the drive link), `portal` (a motion or keyframe request from the web portal) or `check` (a command of a build made for the on-robot checks: the check build's `enable` command, or a motion request of an on-robot check build that a later change adds, such as motion-playback's demonstration). Origin `check` SHALL be permitted only in a firmware built for on-robot checks, which the build marks with `MINI_SPOODER_CHECK_BUILD` (firmware-build); in any other firmware an enable request with origin `check` SHALL be rejected in every mode, including `active`, and SHALL change no output. In `idle` or `safe`, an enable request SHALL be accepted only in one of these cases:
 
 - its origin is `link`, and a drive-link session is live that started after output was last disabled (the reset, or the last entry into `safe` or `fault`);
 - its origin is `portal` or `check`, and no drive-link session is live.
@@ -161,6 +167,16 @@ Any other enable request in `idle` or `safe` SHALL be rejected, SHALL leave the 
 
 - **WHEN** the mode is `safe`, no drive-link session is live, and the web portal sends a direct servo command for servo 3
 - **THEN** no enable request is made, the command is rejected, and the mode stays `safe`
+
+#### Scenario: Check origin outside a check build
+
+- **WHEN** the firmware was built without `MINI_SPOODER_CHECK_BUILD`, the mode is `idle`, no drive-link session is live, and an enable request with origin `check` and a complete pose is made
+- **THEN** the request is rejected and the mode stays `idle`; the same request made in `active` is also rejected, and every servo keeps its output
+
+#### Scenario: Demonstration request in a check build
+
+- **WHEN** the firmware was built with `MINI_SPOODER_CHECK_BUILD`, the mode is `idle`, no drive-link session is live, and a motion request of that build's demonstration reaches its first tick
+- **THEN** the enable request with origin `check` is accepted, and the line `mode active check` is printed
 
 #### Scenario: First request after a reset
 

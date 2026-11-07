@@ -4,8 +4,8 @@ Every step that writes to the robot's flash or resets it (`mise run backup`, `mi
 
 ## 1. PlatformIO project and core library
 
-- [ ] 1.1 Create `firmware/platformio.ini` with the `robot`, `robot-check` and `native` environments of design D1. Pin `espressif8266` and `native` to their newest releases at implementation time. Add `firmware/src/main.cpp` with an empty `setup()` and `loop()`. Read the pinned core's `core_esp8266_waveform*.cpp` and record in design D5 whether a timing change and a zero high time take effect at the period boundary without truncating the pulse in progress. Verify that `mise exec -- pio run -d firmware -e robot` succeeds without a robot connected.
-- [ ] 1.2 Create `core/library.json` with warnings as errors and the `srcFilter` of D1, a first `core/test/test_smoke/` Unity test, and two temporary files under `core/fuzz/dummy_a/` and `core/fuzz/dummy_b/`. Each temporary file defines `LLVMFuzzerTestOneInput`, and one also defines `main`. Reference `core/` from every env with `lib_deps = symlink://../core` and `lib_ldf_mode = off`. Verify that `mise exec -- pio test -d firmware -e native` passes the smoke test, that `pio run -d firmware -e robot` succeeds, and that `nm` on both outputs lists no `LLVMFuzzerTestOneInput`. Then remove the dummy targets.
+- [ ] 1.1 Create `firmware/platformio.ini` with the `robot`, `robot-check` and `native` environments of design D1; only `robot-check` defines `MINI_SPOODER_CHECK_BUILD`. Pin `espressif8266` and `native` to their newest releases at implementation time. Add `firmware/src/main.cpp` with an empty `setup()` and `loop()`. Read the pinned core's `core_esp8266_waveform*.cpp` and record in design D5 whether a timing change and a zero high time take effect at the period boundary without truncating the pulse in progress. Verify that `mise exec -- pio run -d firmware -e robot` succeeds without a robot connected.
+- [ ] 1.2 Create `core/library.json` with warnings as errors and the `srcFilter` of D1, a first `core/test/test_smoke/` Unity test, and two temporary files under `core/fuzz/dummy_a/` and `core/fuzz/dummy_b/`. Each temporary file defines `LLVMFuzzerTestOneInput`, and one also defines `main`. Reference `core/` from every env with `lib_deps = symlink://../core` and `lib_ldf_mode = off`. Add a temporary `core/fuzz/dummy_c/helper.cpp` with a function `dummyHelper` and a temporary `core/test/test_fuzz_include/` that includes it explicitly and calls it. Verify that `mise exec -- pio test -d firmware -e native` passes the smoke test and `test_fuzz_include`, that `pio run -d firmware -e robot` succeeds, that `nm` on the robot ELF and on the smoke test's programme lists no `LLVMFuzzerTestOneInput` and no `dummyHelper`, and that `nm` on `test_fuzz_include`'s programme lists `dummyHelper`. Then remove the dummy targets and the temporary test.
 - [ ] 1.3 Verify the hardware-free rule. Temporarily add `#include <Arduino.h>` to a `core/` source and confirm that `pio test -d firmware -e native` fails, then remove it. Temporarily add an unused variable to a `core/` source and to `firmware/src/main.cpp`, confirm that each fails its build, then remove it.
 
 ## 2. Build checks, diagnostics and mise tasks
@@ -40,7 +40,8 @@ Every step that writes to the robot's flash or resets it (`mise run backup`, `mi
   - release all;
   - resume after release;
   - releasing a released servo changes nothing;
-  - a trim change on a driven servo changes its width with no new command (servo 6, trim +4 → 1439 µs), with the commanded angle still reported as 90°.
+  - a trim change on a driven servo changes its width with no new command (servo 6, trim +4 → 1439 µs), with the commanded angle still reported as 90°;
+  - releasing one servo, and releasing all, calls the registered release hook within the release call, once per newly released servo and not for a servo already released.
 - [ ] 3.3 Implement `core/servo/output_gate` (D5): the four modes, the transitions of the servo-output state diagram, the writer token, the safe-state reasons, the enable rule by origin, `enablePermitted`, the mode listeners and the mode-line text. Verify with `core/test/test_output_gate/`:
   - `idle` after construction with valid trims, and `fault` with an invalid trim;
   - a single servo or a pose in `idle` rejected;
@@ -50,6 +51,8 @@ Every step that writes to the robot's flash or resets it (`mise run backup`, `mi
   - `enterSafe(link-loss)` from `active` releases all servos, sets the reason and makes the token stale;
   - a pose with the stale token rejected after a second caller re-enables;
   - `enterSafe` in `idle` → `safe`;
+  - origin `check` rejected in `idle` and in `active` by a gate constructed without the check-build flag, with no output changed, and accepted with it while no session is live;
+  - `directServo` accepted in `active` without changing the token, so the holder of the current token can still write; rejected in `idle`, `safe` and `fault` with no output changed and no enable made;
   - enable rejected in `fault`;
   - `fault` → `safe` only when the trims become valid, never → `active`;
   - the mode line for each transition.
@@ -68,15 +71,18 @@ Every step that writes to the robot's flash or resets it (`mise run backup`, `mi
 
 ## 5. Firmware glue
 
-- [ ] 5.1 Implement `core/system/loop_stats` (D4). Verify with `core/test/test_loop_stats/`:
+- [ ] 5.1 Implement `core/system/loop_stats` and `core/system/periodic` (D4). Verify with `core/test/test_periodic/` that, with a 10 ms interval, work due at 10 ms that runs at 10 ms or 15 ms gets the deadline 20 ms, work that runs at 20 ms or 60 ms gets 30 ms or 70 ms, and work due at 0xFFFFFFFA that runs at 0xFFFFFFFC gets 4 ms. Verify with `core/test/test_loop_stats/`:
   - a 25 ms pass counts as over budget;
   - a 25 ms pass flagged as a commit pass does not count, and updates the longest commit pass;
   - the longest pass is kept.
-- [ ] 5.2 Implement `firmware/src/servo_driver` (D5). It syncs the model to waveforms on GPIO 15, 13, 12, 14, 2, 4, 5, 16, starts each servo with its first pulse at the commanded width, releases in two non-blocking phases, and leaves the pins untouched in `idle`. Verify that `mise run build` passes, that `grep -rn 'Serial1\|DEBUG_ESP_PORT\|INPUT_PULLUP\|INPUT_PULLDOWN\|Servo.h\|delay(' firmware/src firmware/platformio.ini` finds nothing outside `check_console.cpp`'s `hang`, and that the pin table in `servo_driver.cpp` reads 15, 13, 12, 14, 2, 4, 5, 16.
+- [ ] 5.2 Implement `firmware/src/servo_driver` (D5). It syncs the model to waveforms on GPIO 15, 13, 12, 14, 2, 4, 5, 16, starts each servo with its first pulse at the commanded width, releases in two non-blocking phases with phase 1 run from the bank's release hook inside the release call, and leaves the pins untouched in `idle`. Verify that `mise run build` passes, that `grep -rn 'Serial1\|DEBUG_ESP_PORT\|INPUT_PULLUP\|INPUT_PULLDOWN\|Servo.h\|delay(' firmware/src firmware/platformio.ini` finds nothing outside `check_console.cpp`'s `hang`, and that the pin table in `servo_driver.cpp` reads 15, 13, 12, 14, 2, 4, 5, 16.
 - [ ] 5.3 Wire `main.cpp` (D4): banner, reset cause, load calibration, construct the gate in `idle` or `fault`, print `mode fault calibration` when in `fault`, then on each pass poll `servo_driver`, record the pass time, and return. There is no boot pose. Verify that `mise run build` and `mise run test` pass, and that `grep -n 'enable' firmware/src/main.cpp` finds no call outside the check-console build.
-- [ ] 5.4 Implement `core/check/console_parse` and `firmware/src/check_console` (D7), built only in `robot-check`. Verify with `core/test/test_console_parse/` (every command of D7, and `servo 3`, `servo 9 90`, `enable 1 2 3` and an empty line rejected) under `mise run test`. Verify that `mise exec -- pio run -d firmware -e robot-check` builds, and that `mise run build`'s image check reports no console symbol.
+- [ ] 5.4 Implement `core/check/console_parse` and `firmware/src/check_console` (D7), built only in `robot-check`. Verify with `core/test/test_console_parse/` (every command of D7, and `servo 3`, `servo 9 90`, `enable 1 2 3` and an empty line rejected) under `mise run test`. Verify that `mise exec -- pio run -d firmware -e robot-check` builds, that `mise run build`'s image check reports no console symbol, and that `pio project config -d firmware` shows `MINI_SPOODER_CHECK_BUILD` in `robot-check`'s flags and not in `robot`'s.
 
 ## 6. Hardware checks (each flash write or reset with the user's go-ahead; order per design D8)
+
+These are the first powered checks of the new firmware with servos connected. They run before any on-robot check of drive-link or motion-playback, and no motion is played in them.
+
 
 - [ ] 6.1 Normal build, all servos connected, robot on a stand. Run `mise run backup`, then `mise run upload`, then `mise run backup` again.
   - Verify that `cmp` of the two backups over 0x3FB000–0x3FFFFF finds no difference.
@@ -94,11 +100,12 @@ Every step that writes to the robot's flash or resets it (`mise run backup`, `mi
 - [ ] 6.3 Joint and direction check, check build, legs off the ground. Enable with the standby pose 70, 90, 90, 110, 110, 90, 90, 70. For each index 0–7 in turn, command `servo i <standby + 15>` and then back to standby, and verify that exactly one joint moves. Record, for each index, its GPIO, the leg (front or rear, left or right), the joint (hip or knee), and the direction of increasing angle in `docs/servo-joints.md`. Update the Hardware section of `CLAUDE.md` to point to it. Verify by repeating the sequence once and checking each row of the document against what moves.
 - [ ] 6.4 Mechanical stops, check build, legs off the ground. Run `trimreset` first, so that every trim is 0 and each commanded angle is the output angle. For each index, step `servo i a` in 5° steps from standby towards each end of its default safe range. Stop at the first contact or binding, and record the last free angle in `docs/servo-joints.md`. Where a measured limit is narrower than the default, set it in `kSafeRange`, leaving `kDefaultSafeRange` unchanged. Where the measured limit falls inside the stock envelope, record the affected stock keyframes in `expected_limited.h`, in the document and in design D5. Rerun `mise run test` and reflash the check build. Verify that commanding each servo 10° beyond its range holds it at the limit with no contact.
 - [ ] 6.5 Calibration, check build, robot on a stand.
-  1. `trim 4 -7`: verify that servo 4 visibly moves by about 7° while driven, with no other servo moving.
-  2. `trimreset`, then `trim 0 -3`, `trim 4 -7` and `trim 7 12`. Read the sector with `mise exec -- sh -c 'esptool --port "$ROBOT_PORT" read-flash 0x3FB000 8 build/cal.bin'`, and verify that `cmp build/cal.bin core/test/fixtures/trims_example.bin` finds no difference.
-  3. `status`: record the longest commit pass in design D6. If a logic analyser is available, record whether the pulses stayed intact during a commit.
-  4. Write `core/test/fixtures/trims_fault.bin` to 0x3FB000 with esptool. Verify that the console shows `calibration fault 0 0 -128! 0 0 0 0 0` and `mode fault calibration`, that `enable …` is rejected and every servo stays limp, and that `trim 2 0` gives `calibration ok 0 0 0 0 0 0 0 0` and `mode safe calibration-ok`.
-  5. Write `trims_example.bin` to 0x3FB000, run `mise run upload` (normal build), and verify `calibration ok -3 0 0 0 -7 0 0 12` after a power cycle.
+  1. `enable 70 90 90 110 110 90 90 70`, then `trim 4 -7`: verify that servo 4 visibly moves by about 7° while driven, with no other servo moving.
+  2. `trimreset`, then `trim 0 -3`, `trim 4 -7` and `trim 7 12`, with output still enabled. If a logic analyser is available, record whether the pulses stayed intact during these commits.
+  3. `status`, before any esptool command (which resets the board): record the longest commit pass in design D4, and verify that the over-budget count is unchanged.
+  4. Read the sector with `mise exec -- sh -c 'esptool --port "$ROBOT_PORT" read-flash 0x3FB000 8 build/cal.bin'`, and verify that `cmp build/cal.bin core/test/fixtures/trims_example.bin` finds no difference.
+  5. Write `core/test/fixtures/trims_fault.bin` to 0x3FB000 with esptool. Verify that the console shows `calibration fault 0 0 -128! 0 0 0 0 0` and `mode fault calibration`, that `enable …` is rejected and every servo stays limp, and that `trim 2 0` gives `calibration ok 0 0 0 0 0 0 0 0` and `mode safe calibration-ok`.
+  6. Write `trims_example.bin` to 0x3FB000, run `mise run upload` (normal build), and verify `calibration ok -3 0 0 0 -7 0 0 12` after a power cycle.
 - [ ] 6.6 Run `mise run restore`, then `mise run backup`. Verify that `cmp` of the backup against `baseline/original-flash-4MB.bin` over 0x000000–0x3FBFFF finds no difference, and that a phone sees the access point `Spider Robot` again. Then, if the user wants this firmware back on the robot, run `mise run upload` with their go-ahead.
 
 ## 7. Documentation

@@ -47,9 +47,9 @@ flowchart LR
     lib["library.json<br/>srcFilter excludes test/ and fuzz/"]
     servo["servo/servo_bank.*, servo/output_gate.*, servo/pulse.*"]
     cal["calibration/trim_table.*"]
-    sys["system/reset_cause.*, system/loop_stats.*, check/console_parse.*"]
+    sys["system/reset_cause.*, system/loop_stats.*, system/periodic.*, check/console_parse.*"]
     tests["test/test_*/, test/fixtures/"]
-    fuzz["fuzz/ (not compiled by either env)"]
+    fuzz["fuzz/ (not in the library or any image)"]
   end
   ini -- "lib_deps = symlink://../core" --> lib
   ini -- "[platformio] test_dir = ../core/test" --> tests
@@ -60,11 +60,11 @@ flowchart LR
 
 - **`firmware/platformio.ini`:**
   - `robot`: platform `espressif8266` pinned to an exact version. The expected pin is 4.2.1 with Arduino core 3.1.2; task 1.1 confirms the newest release at implementation time and pins it. Board `esp12e`, `board_build.flash_mode = dio`, `board_build.f_flash = 40000000L`, `board_build.ldscript = eagle.flash.4m.ld` (4 MB, no filesystem), `upload_speed = 460800`.
-  - `robot-check`: `extends = env:robot`, adds `-DMINI_SPOODER_CHECK_CONSOLE=1` and `build_src_filter = +<*>`. `robot` has `build_src_filter = +<*> -<check_console.*>`, so the console is never in the normal image.
+  - `robot-check`: `extends = env:robot`, adds `-DMINI_SPOODER_CHECK_BUILD=1 -DMINI_SPOODER_CHECK_CONSOLE=1` and `build_src_filter = +<*>`. `robot` has `build_src_filter = +<*> -<check_console.*>`, so the console is never in the normal image.
   - `native`: platform `native` pinned, `test_framework = unity`, no framework, and `test_build_src = no`, so that `firmware/src/` (Arduino code) is never compiled on the host.
   - `[platformio]` sets `test_dir = ../core/test`. PlatformIO accepts `test_dir` only in that section, and only the native env runs tests.
 - **Linking `core/`:** all three envs use `lib_deps = symlink://../core` with `lib_ldf_mode = off`. In manual mode PlatformIO builds every source of a listed library that passes the library's own `srcFilter`. `core/library.json` sets `"build": {"srcFilter": ["+<*>", "-<test/>", "-<fuzz/>"]}`, so every `.cpp` under `core/` except `test/` and `fuzz/` compiles in every env without a source list. This replaces spooder's `build_src_filter` list and the check that keeps it complete.
-- **Fuzz targets:** `core/fuzz/<name>/` is where executables with their own entry point live, such as drive-link's fuzz targets with `LLVMFuzzerTestOneInput` or a standalone driver with `main`. Their builds are their owner's concern. Task 1.2 verifies the exclusion with two dummy targets.
+- **Fuzz targets:** `core/fuzz/<name>/` is where executables with their own entry point live, such as drive-link's fuzz targets with `LLVMFuzzerTestOneInput` or a standalone driver with `main`, and their helpers. Their builds are their owner's concern. The `srcFilter` keeps them out of the library, so neither the firmware image nor the library build in the native env compiles them. That is different from a host test compiling one of them on purpose: a test under `core/test/` may include a named source from `core/fuzz/` (drive-link's corpus replay test includes `core/fuzz/drive_link/targets.cpp`), and it is then compiled into that test programme only. Task 1.2 verifies the exclusion with two dummy targets and the explicit inclusion with a third test.
 - **Warnings:** `core/library.json` sets `-Wall -Wextra -Werror` for the library's own sources, and `build_src_flags` sets the same for `firmware/src/`. Neither applies to the Arduino core or Unity.
 - **Hardware-free rule:** the native env has no framework, so a `core/` source that includes `Arduino.h` does not compile. That enforces the rule.
 - **Alternative considered:** spooder's root `platformio.ini` with `src_dir = core`. Rejected: it needs the explicit source list and a separate checker, and it would put a second PlatformIO project at the root next to `firmware/`.
@@ -107,7 +107,7 @@ sequenceDiagram
   end
 ```
 
-- **Service shape:** each service is `void poll(uint32_t nowMs)` and does only due work. Periodic work keeps `next += interval` (catching up at most one interval when late, so a stall does not cause a burst), not `next = now + interval`. Later changes add their poll calls in `main.cpp`. The order of the calls is their concern; this change fixes only the rules and the budget.
+- **Service shape:** each service is `void poll(uint32_t nowMs)` and does only due work. Periodic work runs at most once per pass. Its default deadline rule is in `core/system/periodic` (`nextDeadline(due, ran, interval)`, with a host test): `due + interval` when `ran − due` (unsigned, so wrap-safe) is less than `interval`, so jitter does not accumulate, and otherwise `ran + interval`, so missed intervals are not made up and a stall causes no burst. A service whose own specification sets its own rule follows it; motion-playback's player has the same rule in its own spec. Later changes add their poll calls in `main.cpp`. The order of the calls is their concern; this change fixes only the rules and the budget.
 - **Budget:** 20 ms per pass for all services together. That allows a 50 Hz servo period to be met, and it leaves the drive link's receive and failsafe check at least one look per 20 ms.
 - **Commit exception:** `EEPROM.commit()` erases and programs a flash sector and blocks for tens of milliseconds (inferred: typical sector erase time of the robot's flash chip; task 6.5 measures it). It is the one allowed exception. It happens only when a trim actually changes, so never during a motion unless someone calibrates while one plays. The 40 ms output deadlines are extended by a commit pass that falls within them (firmware-build); task 6.5 measures how long that is.
 - **Statistics:** `core/system/loop_stats` is pure arithmetic (longest pass, the over-budget count that excludes commit passes, the longest commit pass) with a host test. `main.cpp` measures each pass with `micros()`.
@@ -141,19 +141,20 @@ sequenceDiagram
   - The mode state machine of servo-output: `idle`, `active`, `safe` and `fault`.
   - The writer token: a 32-bit counter, incremented on every entry into `safe` or `fault`. A pose or servo command is accepted only when the mode is `active` and the caller's token equals the counter.
   - **Why a token:** a motion that was running when the safe state was entered cannot continue after another caller re-enables output, because its token is stale. The gate enforces this; it does not rely on every caller's discipline.
-  - `enterSafe` is synchronous: it releases every servo in the model in the same call. The driver turns that into pin changes within 40 ms. The gate then calls its mode listeners before returning; the firmware registers one that calls motion-playback's stop.
-  - **Enable rule:** `enable(origin, pose)` with `origin` one of `link`, `portal`, `check`. The gate keeps two facts from drive-link: whether a session is live, and whether the live session started after the last disable. drive-link calls `linkSessionStarted()` and `linkSessionEnded()`; every entry into `safe` or `fault` clears the "started after" fact. In `idle` or `safe`, `link` is allowed only with a live session that started after the disable, and `portal` and `check` only with no live session. `enablePermitted(origin)` answers the same question without enabling, so that the web portal can refuse a request before it reaches the player.
+  - `enterSafe` is synchronous: it releases every servo in the model in the same call, and the model's release hook starts the driver's release phase 1 within that call (D5, driver actions), so no new pulse starts after the request. The gate then calls its mode listeners before returning. Which services register a listener is their concern (Cross-change assumptions).
+  - **Direct command:** `directServo(i, angle)` is the token-free single-servo command for a new, explicit request (the web portal's `/controller?servo=`). It is accepted only in `active` and behaves as `setServo` with the current token, so the portal's glue never needs to hold or read a token. It never enables output and never changes the token. A writer continuing its own sequence (motion-playback's glue) keeps using the token that its enable returned, so a stale motion still stops at the safe state.
+  - **Enable rule:** `enable(origin, pose)` with `origin` one of `link`, `portal`, `check`. The gate is constructed with a flag that permits `check`; the firmware passes it from `MINI_SPOODER_CHECK_BUILD`, which `robot-check` defines (and any on-robot check env of a later change, such as motion-playback's `motion-demo`), and which `robot` does not. Without the flag, `check` is always rejected. The gate keeps two facts from drive-link: whether a session is live, and whether the live session started after the last disable. drive-link calls `linkSessionStarted()` and `linkSessionEnded()`; every entry into `safe` or `fault` clears the "started after" fact. In `idle` or `safe`, `link` is allowed only with a live session that started after the disable, and `portal` and `check` only with no live session. `enablePermitted(origin)` answers the same question without enabling, so that the web portal can refuse a request before it reaches the player.
   - **Why this rule:** it is the settled product decision. After a link loss the pak's old session is over, so a new session's first motion request, or the portal once nobody drives, brings output back. Only an explicit motion or keyframe request reaches `enable`, through motion-playback's enable handshake, so a stop, a session start or a direct servo command never re-enables output.
-  - **Origin of a request:** the firmware binding of motion-playback's servo interface records the origin of each motion or keyframe request it forwards to the player, and passes the origin of the request whose first tick enables output.
+  - **Origin of a request:** `enable` takes the origin as an argument and does not infer it. Which origin each caller passes is that caller's concern (Cross-change assumptions).
 - **`firmware/src/servo_driver`:** drives the pins with the core's waveform generator (`startWaveform` and `stopWaveform` from `core_esp8266_waveform.h`), which is what the core's `Servo` class uses underneath. It does not use `Servo` objects, for two reasons:
   - `Servo::detach()` blocks for 20 ms (`delay(REFRESH_INTERVAL)` in core 2.7.4 and 3.1.2). Eight detaches would block for 160 ms, which breaks the loop budget and delays the failsafe.
   - The model owns the mapping and its rounding, so the host tests cover them. `Servo::write` would remap.
-- **Driver actions, each pass, per servo:**
+- **Driver actions, per servo** (each pass, except release phase 1, which runs inside the release call through the bank's release hook):
   - **Newly driven:** `pinMode(OUTPUT)`, `digitalWrite(LOW)`, then `startWaveform(pin, width, 20000 − width, 0)`, so the first pulse already has the commanded width.
   - **Width changed:** `startWaveform` with the new timing. The generator applies it at the next period.
-  - **Newly released, phase 1:** `startWaveform(pin, 0, 20000, 0)` stops further high pulses after the one in progress, and the driver records the time.
+  - **Newly released, phase 1:** in the release call itself (one servo, all servos, `enterSafe` or a fault), `startWaveform(pin, 0, 20000, 0)` stops further high pulses after the one in progress, and the driver records the time. It does not wait for the next pass, so no pulse starts after the release is requested.
   - **Released, phase 2:** in the first pass at least 20 ms after phase 1, `stopWaveform(pin)` and `digitalWrite(pin, LOW)`.
-  - A release therefore completes within 20 ms plus one pass, at most 40 ms, and no call waits. Task 1.1 confirms in the pinned core's waveform source that a timing change and a zero high time take effect at the period boundary, without truncating the pulse in progress. If they do not, the driver waits for the end of the current pulse before changing it, using the phase it recorded.
+  - A release therefore completes within 20 ms plus one pass, at most 40 ms from the request, and no call waits. A new or changed width is applied at the next pass and takes effect at the next period, also at most 40 ms. Task 1.1 confirms in the pinned core's waveform source that a timing change and a zero high time take effect at the period boundary, without truncating the pulse in progress. If they do not, the driver waits for the end of the current pulse before changing it, using the phase it recorded.
 - **Strapping pins:** no source calls `Serial1`, or `pinMode` with a pull, on GPIO15 or GPIO2, and the build sets no `DEBUG_ESP_PORT`. Until the first enable, `servo_driver` does not touch the pins.
 - **Alternatives considered:**
   - `analogWrite` at 50 Hz: its resolution is too coarse for servo pulses.
@@ -182,7 +183,7 @@ sequenceDiagram
   - `trim i v`, `trimreset`;
   - `status`;
   - `restart`, `hang`.
-- **Parser:** `core/check/console_parse` is pure parsing into a command value, with a host test for every command and for malformed input. The console's `enable` uses origin `check`, keeps the token it gets and passes it on, as any caller would. The check build plays no motions, so its `enable` stands in for the motion request.
+- **Parser:** `core/check/console_parse` is pure parsing into a command value, with a host test for every command and for malformed input. The console's `enable` uses origin `check`, keeps the token it gets and passes it on, as any caller would. The check build plays no motions, so its `enable` stands in for the motion request. `robot-check` defines `MINI_SPOODER_CHECK_BUILD` as well as `MINI_SPOODER_CHECK_CONSOLE`: the first permits the origin `check`, the second compiles the console. An on-robot check env of a later change can set the first without the second.
 - **`hang`:** busy-waits without yielding, so the software watchdog resets the chip. This tests the reset-cause line.
 - **Why a console, not compile-time scenarios** (the previous draft's `robot-calcheck`): the joint and direction check needs servos driven one at a time on demand, and the gate checks need commands in a chosen order. A console does both without moving anything at boot.
 
@@ -197,8 +198,9 @@ flowchart TD
   E --> F["6.6 return to stock"]
 ```
 
+- **First powered checks:** 6.1–6.5 are the first powered checks of the new firmware with servos connected, and they play no motion. How the other changes' on-robot checks follow them is under Cross-change assumptions.
 - **No movement before the gate is checked:** the boot-still and gate checks (6.1, 6.2) come before any check that moves a joint over its range. Every check that drives a servo runs with the robot on a stand, legs off the ground.
-- **Joint map:** 6.3 records each index's joint and the direction of increasing angle in `docs/servo-joints.md`, before any later change runs a motion.
+- **Joint map and stops before any motion:** 6.3 records each index's joint and the direction of increasing angle in `docs/servo-joints.md`, and 6.4 sets the measured safe ranges, before any later change plays a motion. 6.6 (return to stock) is not a prerequisite of the other changes' checks.
 
 ## Cross-change assumptions
 
@@ -206,29 +208,31 @@ These are what the other changes own. This change relies on them and does not sp
 
 - **motion-playback:**
   - It never moves the robot at boot. When the first tick of a motion or keyframe is due and output is not enabled, it gives one complete pose (its enable handshake, which uses the zero pose), and it uses the returned token for every later pose or servo command. That handshake is the only path to `enable` in the normal build.
-  - Its firmware binding passes the origin (`link` or `portal`) of the request whose first tick makes that handshake.
-  - It ends the running motion when a command is rejected, and its stop is called by the mode listener when output enters `safe` or `fault`.
+  - Its firmware binding passes the origin (`link` or `portal`, or `check` in an on-robot check build) of the request whose first tick makes that handshake.
+  - It ends the running motion when a command is rejected, and it reads the mode before every tick, so a safe state or fault from any cause ends its motion at its next chance to run without a call from this change. It may also register a mode listener.
   - Its ticks are a poll service within the loop budget.
   - It passes table angles as commanded angles (0–180°); the trims and the safe ranges are applied here.
-  - Its motion checks run after task 6.3 and with the legs off the ground.
+  - Its firmware binding passes origin `check` for the requests of its `motion-demo` demonstration, an on-robot check env that defines `MINI_SPOODER_CHECK_BUILD`. Only with that marker can the demonstration's `go` enable output.
+  - Its motion-acceptance checks run after this change's hardware checks 6.1–6.5 and after drive-link's link-loss checks, with the legs off the ground first.
 - **drive-link:**
   - It calls `enterSafe(link-loss)` when a session ends (a lapse or a sequence jump), in the same pass and before the player's next tick, and never calls `enable` or leaves `safe` itself.
   - It calls `linkSessionStarted()` when a session starts and `linkSessionEnded()` when it ends, which is the session state that the enable rule uses. It reports whether a session is live, as its spec says.
   - It reads the mode, the safe reason and the commanded angles (without trims), or that a servo is released or not yet commanded, from the state report for its telemetry.
   - Its receive and failsafe check is a poll service, called before the player in each pass.
   - Its timing can count on the 20 ms pass budget, except for a pass that commits calibration. Task 6.5 records how long that pass takes.
-  - It keeps its fuzz executables outside the library (it uses `fuzz/drive_link/` at the repository root) and builds them itself.
-  - It runs its link-loss tests with servos attached and output gated before motion-playback's motion checks.
+  - It keeps its fuzz harness in `core/fuzz/drive_link/`, outside the library, and builds its executables itself. Its corpus replay test under `core/test/` includes `core/fuzz/drive_link/targets.cpp` explicitly, which firmware-build allows.
+  - Its on-robot checks start after this change's hardware checks 6.1–6.5. Its first checks are its link-loss checks: one with no request, then one with a single Standby that only proves that a lapse releases a driven pose and is not a motion-acceptance check. Its walking checks and motion-playback's motion-acceptance checks come after them.
   - It starts the access point with Wi-Fi persistence off, so it stores nothing in the SDK data sector; `mise run restore` returns that sector to stock in any case.
 - **web-portal:**
   - It maps `/save?key=<i>&value=<v>` with `i` in 0–7 to "set trim" with the range −124…+124, and `key=100` to "reset all trims".
   - It fills `/setting` from the trim table, including −1 for an erased byte.
   - It sends motion requests and `/online` keyframes to motion-playback, whose handshake enables output with origin `portal`. Before forwarding a robot-moving request while output is not `active`, it asks `enablePermitted(portal)` and refuses the request when that is false.
-  - It sends direct servo commands (`/controller?servo=`, including the Zero check page's per-servo buttons) to servo-output, which rejects them unless the mode is `active` (Open questions). The Zero position button requests motion 100 through motion-playback, so it can enable output like any motion request.
+  - It sends direct servo commands (`/controller?servo=`, including the Zero check page's per-servo buttons) to servo-output's token-free direct servo command (`directServo`), which rejects them unless the mode is `active` (Open questions). It never holds or reads a writer token and never makes an enable request. The Zero position button requests motion 100 through motion-playback, so it can enable output like any motion request.
   - It validates angles against the accepted range 0–180° and relies on the safe-range clamp, adding none of its own.
   - It keeps serving `/setting` and `/save` in `safe` and `fault`, so that a damaged trim can be repaired.
   - It labels channels with the GPIO map 15, 13, 12, 14, 2, 4, 5, 16.
 - **handheld-pak:** any GPIO label it shows uses the same map. It relies on the enable rule only through drive-link: after a link loss, its new session's first motion request brings output back.
+- **Hardware check order across changes** (each owner's tasks define its own checks; this is the order they rely on): this change's 6.1–6.5, then drive-link's link-loss checks (no request, then the single Standby), then drive-link's walking checks and motion-playback's motion-acceptance checks, all with the legs off the ground before any check on the ground.
 - **Every later change** adds its hardware-free code to `core/`, its tests to `core/test/`, and its hardware code and poll call to `firmware/src/`. It may add its own env or `pre:` extra script, but does not edit the `lib_deps`, `lib_ldf_mode`, `srcFilter` or warning settings. Executables with their own entry point live under `core/fuzz/<name>/` or outside `core/`.
 
 ## Risks / Trade-offs
@@ -253,4 +257,4 @@ These are what the other changes own. This change relies on them and does not sp
 - Which joint each servo index drives, in which direction, and where its mechanical stops are. Unknown until task 6.3 and task 6.4.
 - How long `EEPROM.commit()` blocks on this chip, and whether servo pulses stay intact during it. Measured in task 6.5.
 - Whether the pinned core's waveform generator applies a timing change at the period boundary. Checked in task 1.1.
-- **Direct servo control before a motion (product decision, for the user):** stock attaches every servo at boot in the zero pose, so its zero check and direct servo control work at once. Here output comes back only with an explicit motion request (the settled rule), so after a reset or a safe state the Zero check page's per-servo buttons and the other direct servo commands are rejected until a motion (for example Zero position, motion 100) has been requested. Whether a direct servo command may also enable output, and with which complete pose, is not settled by stock or by the settled decisions.
+- **Resolved:** may a direct servo command enable output? No. Output comes back only with an explicit motion request (the settled rule), so after a reset or a safe state the Zero check page's per-servo buttons and the other direct servo commands are rejected until a motion (for example Zero position, motion 100) has been requested. This differs from stock, which attaches every servo at boot in the zero pose.
