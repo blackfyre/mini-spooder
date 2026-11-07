@@ -9,6 +9,8 @@ The robot's web portal on its own access point. It reproduces the stock firmware
 ### Requirement: Portal server and address
 The firmware SHALL serve the portal over HTTP on TCP port 80 at the robot's address on its own access point. drive-link defines the access point. The server SHALL be up within 10 seconds of power-on and SHALL stay up while the firmware runs, also while a motion or a keyframe plays and while a remote's session is live. No route handler SHALL wait for a motion or a keyframe to end. The routes SHALL answer `GET` requests. A request for any other path, or a request with any other method, SHALL be answered with status 404, content type `text/plain` and the body `Not found: <path>`, as the stock image's web server does. The portal SHALL NOT redirect requests, as the stock image does not; the access point's name services are drive-link's.
 
+No HTTP work SHALL hold a main-loop pass for more than a few milliseconds, whatever the client does. The portal SHALL write each response across loop passes, in each pass at most what the client's send buffer accepts without waiting. Every response SHALL carry `Content-Length` (so HTTP/1.0 clients get the whole body) and `Connection: close`, and the portal SHALL close the connection once the client has acknowledged the response. The portal SHALL close a connection at once when the client disconnects, and within 2 seconds of the last progress when the client stops taking or acknowledging data. The portal SHALL write one response at a time; a connection that arrives meanwhile SHALL wait in the server's queue and be served after it. The portal SHALL wait at most 20 ms in one pass for a request line or header that has only partly arrived.
+
 #### Scenario: Phone opens the portal
 - **WHEN** a phone joined to the robot's access point requests `http://<robot address>/`
 - **THEN** it receives the Controller page with status 200
@@ -20,6 +22,18 @@ The firmware SHALL serve the portal over HTTP on TCP port 80 at the robot's addr
 #### Scenario: Wrong method
 - **WHEN** a client sends `POST /controller?pm=2`
 - **THEN** the response has status 404, and no motion starts
+
+#### Scenario: Page load does not hold the loop
+- **WHEN** a phone loads the Controller page
+- **THEN** the page arrives byte for byte with a `Content-Length` equal to its size, it is written across several loop passes, and no pass spends more than a few milliseconds on HTTP
+
+#### Scenario: Client leaves in the middle of a page
+- **WHEN** a client requests `/editor` and closes its connection before the page has arrived
+- **THEN** the portal closes the connection in the next pass, and no pass waits for the client
+
+#### Scenario: Client stops reading
+- **WHEN** a client requests `/editor` and then reads nothing more
+- **THEN** the portal closes the connection within 2 seconds of the last data the client took, no pass waits for the client, and a request queued behind it is served afterwards
 
 ### Requirement: Self-contained pages
 Every page SHALL be a complete HTML document that loads no external resources: no remote or local stylesheets, scripts, fonts or images. Each page's styles and scripts SHALL be inline. Each page SHALL send `<meta name=viewport content="width=device-width,initial-scale=1">` and SHALL lay out without horizontal scrolling at a viewport width of 320 CSS pixels. Text SHALL be in English.
