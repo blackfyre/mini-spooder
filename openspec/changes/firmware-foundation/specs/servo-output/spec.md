@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Drives the robot's eight servos from commanded angles with the stock pin map and pulse mapping. Output is limited to a per-servo safe range. The robot stays still until output is explicitly enabled with a complete pose. A safe state, reachable from every mode and overriding every caller, lets all servos go limp. Motions, direct servo control, the zero check and the drive link all share this one output path.
+Drives the robot's eight servos from commanded angles with the stock pin map and pulse mapping. Output is limited to a per-servo safe range. The robot stays still until output is explicitly enabled with a complete pose, which for servo-output's own enable is the stock zero pose. A safe state, reachable from every mode and overriding every caller, lets all servos go limp. Motions, direct servo control, the zero check and the drive link all share this one output path.
 
 ## ADDED Requirements
 
@@ -74,9 +74,16 @@ The firmware SHALL be in exactly one of four output modes:
 
 The firmware SHALL drive servos only in `active`.
 
-- **Entering `active`:** an accepted enable request (Enabling output), which carries a complete pose (one commanded angle for each of the eight servos), SHALL move `idle` or `safe` to `active`, with every servo driven at that pose. In `active`, an enable request from any permitted origin (Enabling output) SHALL apply the pose. An enable request SHALL be rejected in `fault`.
+- **Entering `active`:** an accepted enable request (Enabling output), which carries a complete pose (one commanded angle for each of the eight servos), SHALL move `idle` or `safe` to `active`, with every servo driven at that pose. In `active`, an enable request that Enabling output permits in `active` SHALL apply the pose. An enable request SHALL be rejected in `fault`.
 - **Writer token:** each accepted enable request SHALL return the current writer token. A pose or single-servo command SHALL be accepted only in `active` and only with the current token. Otherwise it SHALL be rejected and SHALL change no output.
-- **Direct servo command:** servo-output SHALL also offer a single-servo command that carries no token, for a new, explicit request to move one servo (the web portal's direct servo command). It SHALL be accepted only in `active`, SHALL apply as a single-servo command with the current token would, and SHALL NOT make an enable request or change the token. In any other mode it SHALL be rejected and SHALL change no output. A writer that continues a sequence of its own (motion-playback) SHALL use the token that its enable request returned, not this command.
+- **Direct servo command:** servo-output SHALL also offer a single-servo command that carries no token, for a new, explicit request from the web portal to move one servo (the web portal's direct servo command). Its origin SHALL be `portal`. It SHALL be handled as follows, and SHALL NOT change the token in any case:
+  - A command whose index is outside 0–7 or whose angle is outside 0–180 SHALL be rejected in every mode, SHALL make no enable request and SHALL change no output and no mode.
+  - While a drive-link session is live, the command SHALL be rejected in every mode, SHALL make no enable request and SHALL change no output and no mode.
+  - Otherwise, in `active`, it SHALL apply as a single-servo command with the current token would.
+  - Otherwise, in `idle` or `safe`, it SHALL make an enable request with origin `portal` and the enable pose (Enable pose). When that request is accepted, the command SHALL then apply the commanded angle to its servo within the same call, so that the commanded servo's first pulse already has the width for the commanded angle and every other servo's first pulse the width for its enable-pose angle. When the request is rejected, the command SHALL change no output.
+  - In `fault`, it SHALL be rejected and SHALL change no output.
+
+  A writer that continues a sequence of its own (motion-playback) SHALL use the token that its enable request returned, not this command.
 - **Safe-state request:** from any mode, a safe-state request carrying a reason (`link-loss` from the drive link, or `check` from the check build's console) SHALL move `idle` or `active` to `safe` at once, in the same loop pass. It SHALL record the reason, release every servo (Release), and make the current token stale. A safe-state request in `safe` or `fault` SHALL change nothing except to update the recorded reason in `safe`.
 - **Calibration fault:** a calibration fault (servo-calibration) SHALL move any mode to `fault`, release every servo, and make the token stale. `fault` SHALL change to `safe` only when servo-calibration reports that every trim is valid.
 - **No other transitions:** the firmware SHALL NOT enter `active` on its own: not at boot, not after a fault clears, and not after a safe state.
@@ -90,7 +97,9 @@ stateDiagram-v2
   [*] --> fault: reset, calibration fault
   idle --> active: accepted enable(complete pose)
   safe --> active: accepted enable(complete pose)
-  active --> active: enable(pose) / pose / servo with current token
+  idle --> active: direct servo command (enable pose)
+  safe --> active: direct servo command (enable pose)
+  active --> active: enable(pose) / pose / servo with current token / direct servo
   idle --> safe: safe(reason)
   active --> safe: safe(reason)
   idle --> fault: calibration fault
@@ -109,9 +118,9 @@ stateDiagram-v2
 - **WHEN** an enable request with origin `portal` and the pose 70, 90, 90, 110, 110, 90, 90, 70 is given in `idle` while no drive-link session is live
 - **THEN** the mode is `active`, the line `mode active portal` is printed, all eight servos carry pulses for that pose within 40 ms, and each servo's first pulse already has the width for its angle in that pose
 
-#### Scenario: Single servo before enable
+#### Scenario: Single servo with a token before enable
 
-- **WHEN** servo 0 is commanded on its own in `idle`
+- **WHEN** servo 0 is commanded on its own in `idle` by a single-servo command that carries a token
 - **THEN** the command is rejected and no servo pin carries pulses
 
 #### Scenario: Safe state overrides a running writer
@@ -126,22 +135,46 @@ stateDiagram-v2
 
 #### Scenario: Direct servo command without a token
 
-- **WHEN** output was enabled by motion-playback's enable request, and the web portal then sends a direct servo command for servo 3 at 80°
+- **WHEN** output was enabled by motion-playback's enable request, no drive-link session is live, and the web portal then sends a direct servo command for servo 3 at 80°
 - **THEN** the command is accepted, servo 3 is driven at 80° plus its trim within its safe range, the mode stays `active`, and the token that motion-playback holds is still current
+
+#### Scenario: Direct servo command from idle
+
+- **WHEN** the robot has reset with every trim 0, no drive-link session is live, and the web portal sends a direct servo command for servo 3 at 80°
+- **THEN** the mode is `active`, the line `mode active portal` is printed, and within 40 ms servo 3 carries pulses for 80° and servos 0–2 and 4–7 carry pulses for their enable-pose angles 135, 45, 135, 45, 135, 45 and 135, each servo's first pulse already at that width
+
+#### Scenario: Direct servo command while a session is live
+
+- **WHEN** output is `active` after a drive-link session's motion request, that session is still live, and the web portal sends a direct servo command for servo 3 at 80°
+- **THEN** the command is rejected, no enable request is made, the mode stays `active`, and every servo keeps its output and its reported commanded angle
+
+#### Scenario: Invalid direct servo command in idle
+
+- **WHEN** the mode is `idle`, no drive-link session is live, and the web portal sends a direct servo command for servo 8, or for servo 3 at 181°
+- **THEN** each command is rejected, no enable request is made, the mode stays `idle`, and no servo pin carries pulses
 
 #### Scenario: Enable refused in fault
 
-- **WHEN** the mode is `fault` and an enable request with origin `portal` and a complete pose is given while no drive-link session is live
-- **THEN** the request is rejected and no servo pin carries pulses
+- **WHEN** the mode is `fault`, no drive-link session is live, and an enable request with origin `portal` and a complete pose is given, or the web portal sends a direct servo command
+- **THEN** the request and the command are rejected and no servo pin carries pulses
+
+### Requirement: Enable pose
+
+servo-output SHALL define the enable pose as the stock zero pose, 135, 45, 135, 45, 45, 135, 45, 135 for servos 0–7, which the stock firmware attaches at boot, and SHALL make it available to the rest of the firmware. Every enable request that servo-output makes itself (the direct servo command in `idle` or `safe`) SHALL carry the enable pose. The enable pose SHALL NOT be applied at boot: the robot stays still after a reset until an accepted enable request (the Boot still scenario of Output modes and safe state).
+
+#### Scenario: Enable pose value
+
+- **WHEN** the enable pose is read
+- **THEN** it is 135, 45, 135, 45, 45, 135, 45, 135, and no angle of it is limited by the default safe ranges with trims of −1 or 0
 
 ### Requirement: Enabling output
 
-Output SHALL be enabled from `idle` or `safe` only on behalf of an explicit request to play a motion or a keyframe (motion-playback), or on behalf of a command of a build made for the on-robot checks (origin `check`). A stop, a direct servo command, a calibration change, the start or end of a drive-link session, and a mode change SHALL NOT make an enable request. Each enable request SHALL name its origin: `link` (a motion request from the drive link), `portal` (a motion or keyframe request from the web portal) or `check` (a command of a build made for the on-robot checks: the check build's `enable` command, or a motion request of an on-robot check build that a later change adds, such as motion-playback's demonstration). Origin `check` SHALL be permitted only in a firmware built for on-robot checks, which the build marks with `MINI_SPOODER_CHECK_BUILD` (firmware-build); in any other firmware an enable request with origin `check` SHALL be rejected in every mode, including `active`, and SHALL change no output. In `idle` or `safe`, an enable request SHALL be accepted only in one of these cases:
+Output SHALL be enabled from `idle` or `safe` only on behalf of an explicit request to play a motion or a keyframe (motion-playback), on behalf of a direct servo command (Output modes and safe state), or on behalf of a command of a build made for the on-robot checks (origin `check`). A stop, a calibration change, the start or end of a drive-link session, and a mode change SHALL NOT make an enable request. Each enable request SHALL name its origin: `link` (a motion request from the drive link), `portal` (a motion, keyframe or direct servo request from the web portal) or `check` (a command of a build made for the on-robot checks: the check build's `enable` command, or a motion request of an on-robot check build that a later change adds, such as motion-playback's demonstration). Origin `check` SHALL be permitted only in a firmware built for on-robot checks, which the build marks with `MINI_SPOODER_CHECK_BUILD` (firmware-build); in any other firmware an enable request with origin `check` SHALL be rejected in every mode, including `active`, and SHALL change no output. In `idle` or `safe`, an enable request SHALL be accepted only in one of these cases:
 
 - its origin is `link`, and a drive-link session is live that started after output was last disabled (the reset, or the last entry into `safe` or `fault`);
 - its origin is `portal` or `check`, and no drive-link session is live.
 
-Any other enable request in `idle` or `safe` SHALL be rejected, SHALL leave the mode unchanged and SHALL change no output. After a safe state, output therefore comes back with the next explicit motion request from a new drive-link session, or from the web portal while no session is live. servo-output SHALL make available to the rest of the firmware, for each origin, whether an enable request from it would be accepted now.
+Any other enable request in `idle` or `safe` SHALL be rejected, SHALL leave the mode unchanged and SHALL change no output. In `active`, an enable request with origin `portal` SHALL be rejected while a drive-link session is live, and SHALL change no output; any other enable request that this requirement permits SHALL apply its pose. While a drive-link session is live, servo-output therefore never accepts an enable request with origin `portal`, in any mode. After a safe state, output therefore comes back with the next explicit motion request from a new drive-link session, or with the next motion, keyframe or direct servo request from the web portal while no session is live. servo-output SHALL make available to the rest of the firmware, for each origin, whether an enable request from it would be accepted now.
 
 #### Scenario: Portal after link loss
 
@@ -165,8 +198,18 @@ Any other enable request in `idle` or `safe` SHALL be rejected, SHALL leave the 
 
 #### Scenario: Direct servo command in the safe state
 
-- **WHEN** the mode is `safe`, no drive-link session is live, and the web portal sends a direct servo command for servo 3
-- **THEN** no enable request is made, the command is rejected, and the mode stays `safe`
+- **WHEN** the mode is `safe` after a link loss, no drive-link session is live, every trim is 0, and the web portal sends a direct servo command for servo 3 at 80°
+- **THEN** an enable request with origin `portal` and the enable pose is accepted, the line `mode active portal` is printed, servo 3 is driven at 80° and every other servo at its enable-pose angle
+
+#### Scenario: Direct servo command in the safe state while a session is live
+
+- **WHEN** the mode is `safe` after a link loss, a new drive-link session is live, and the web portal sends a direct servo command for servo 3
+- **THEN** no enable request is made, the command is rejected, the mode stays `safe`, and no servo pin carries pulses
+
+#### Scenario: Portal enable in active while a session is live
+
+- **WHEN** output is `active` after a drive-link session's motion request, that session is still live, and an enable request with origin `portal` and a complete pose is made
+- **THEN** the request is rejected, the mode stays `active`, and every servo keeps its output
 
 #### Scenario: Check origin outside a check build
 

@@ -32,6 +32,7 @@ Every step that writes to the robot's flash or resets it (`mise run backup`, `mi
   - servo 1 at a commanded 0° with trim −1 → 35°;
   - every range satisfies `1 ≤ low < high ≤ 180`;
   - no stock keyframe angle, nor any zero-pose angle, is limited by `kDefaultSafeRange` with trims −1 and 0;
+  - `kEnablePose` is 135, 45, 135, 45, 45, 135, 45, 135;
   - the stock keyframe angles that `kSafeRange` limits with trims −1 and 0 are exactly those in `expected_limited.h`.
 - [ ] 3.2 Implement `core/servo/servo_bank` (D5): servo indices 0–7, complete pose, single-servo command, commanded angles accepted only within 0–180°, release of one or all, the trim applied before the safe range, and the state report. Verify with `core/test/test_servo_bank/`:
   - index 8 rejected;
@@ -42,7 +43,7 @@ Every step that writes to the robot's flash or resets it (`mise run backup`, `mi
   - releasing a released servo changes nothing;
   - a trim change on a driven servo changes its width with no new command (servo 6, trim +4 → 1439 µs), with the commanded angle still reported as 90°;
   - releasing one servo, and releasing all, calls the registered release hook within the release call, once per newly released servo and not for a servo already released.
-- [ ] 3.3 Implement `core/servo/output_gate` (D5): the four modes, the transitions of the servo-output state diagram, the writer token, the safe-state reasons, the enable rule by origin, `enablePermitted`, the mode listeners and the mode-line text. Verify with `core/test/test_output_gate/`:
+- [ ] 3.3 Implement `core/servo/output_gate` (D5): the four modes, the transitions of the servo-output state diagram, the writer token, the safe-state reasons, the enable rule by origin, `enablePermitted`, `directServo` with its enable from `idle` or `safe` with `kEnablePose`, the mode listeners and the mode-line text. Verify with `core/test/test_output_gate/`:
   - `idle` after construction with valid trims, and `fault` with an invalid trim;
   - a single servo or a pose in `idle` rejected;
   - enable with origin `portal` in `idle` and no session → `active` with every servo driven at the pose;
@@ -52,7 +53,13 @@ Every step that writes to the robot's flash or resets it (`mise run backup`, `mi
   - a pose with the stale token rejected after a second caller re-enables;
   - `enterSafe` in `idle` → `safe`;
   - origin `check` rejected in `idle` and in `active` by a gate constructed without the check-build flag, with no output changed, and accepted with it while no session is live;
-  - `directServo` accepted in `active` without changing the token, so the holder of the current token can still write; rejected in `idle`, `safe` and `fault` with no output changed and no enable made;
+  - `directServo` accepted in `active` with no session live, without changing the token, so the holder of the current token can still write;
+  - `directServo(3, 80)` in `idle` with no session → `active`, `mode active portal`, servo 3 at 80° and the other servos at their `kEnablePose` angles, with the bank showing those final angles when the call returns (before any driver pass), and the token unchanged;
+  - `directServo(3, 80)` in `safe` after `enterSafe(link-loss)` with no session → `active` in the same way;
+  - `directServo` rejected while a session is live, in `idle`, `safe` and `active`, with no output, mode or report changed and no enable made;
+  - `directServo` with index 8 or angle 181 rejected in `idle` with no enable made and the mode still `idle`;
+  - `directServo` rejected in `fault` with no output changed;
+  - enable with origin `portal` rejected in `active` while a session is live, with no output changed; `enablePermitted(portal)` false in that state;
   - enable rejected in `fault`;
   - `fault` → `safe` only when the trims become valid, never → `active`;
   - the mode line for each transition.
