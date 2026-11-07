@@ -4,8 +4,8 @@ The paths follow design.md (D1, D8) and `firmware-foundation`'s layout. If that 
 
 ## 1. Protocol codec
 
-- [ ] 1.1 Copy `../spooder/core/protocol/protocol.{h,cpp}` to `core/drive_link/protocol.{h,cpp}` and adapt it to D2. Keep version 1, the types command (2-byte payload) and telemetry (26-byte payload), and `MAX_FRAME_SIZE` 33. Keep `crc16`, `encodeCommand`, `encodeTelemetry` and `Decoder` (`push`, `next`, `idle`, counts, `pending`). Drop the other frame types and `frameBytes`. Verify that `mise run test` builds it.
-- [ ] 1.2 Add `core/test/test_drive_link_protocol`:
+- [x] 1.1 Copy `../spooder/core/protocol/protocol.{h,cpp}` to `core/drive_link/protocol.{h,cpp}` and adapt it to D2. Keep version 1, the types command (2-byte payload) and telemetry (26-byte payload), and `MAX_FRAME_SIZE` 33. Keep `crc16`, `encodeCommand`, `encodeTelemetry` and `Decoder` (`push`, `next`, `idle`, counts, `pending`). Drop the other frame types and `frameBytes`. Verify that `mise run test` builds it.
+- [x] 1.2 Add `core/test/test_drive_link_protocol`:
   - `crc16("123456789")` is 0x29B1;
   - encode and decode round trips for both types at sequence numbers 0 and 255;
   - each of the Frame format requirement's scenarios: a corrupted frame, garbage between frames, a false start marker, and an unknown version;
@@ -14,7 +14,7 @@ The paths follow design.md (D1, D8) and `firmware-foundation`'s layout. If that 
   - `pending()` never exceeds 33.
 
   Verify that `mise run test` passes, and that it fails when the CRC's initial value is changed temporarily.
-- [ ] 1.3 Add `core/test/test_drive_link_golden` and generate `core/test/golden/drive_link_v1.txt` with `MINI_SPOODER_WRITE_GOLDEN=1 mise run test`, in spooder's line format. Include:
+- [x] 1.3 Add `core/test/test_drive_link_golden` and generate `core/test/golden/drive_link_v1.txt` with `MINI_SPOODER_WRITE_GOLDEN=1 mise run test`, in spooder's line format. Include:
   - command frames for a motion request, a stop, motions 99 and 100, and the extremes at sequence number 255;
   - telemetry for each result value 0–3, with a pending motion, with a joint at 255, with an age of 255, and the extremes;
   - rejected frames for a bad CRC, version 2, type 3, and a command frame with payload length 3.
@@ -23,12 +23,12 @@ The paths follow design.md (D1, D8) and `firmware-foundation`'s layout. If that 
 
 ## 2. Session logic
 
-- [ ] 2.1 Implement `core/drive_link/session.{h,cpp}` (D1, D3–D6) with named constants:
+- [x] 2.1 Implement `core/drive_link/session.{h,cpp}` (D1, D3–D6) with named constants:
   - `PORT` 52041, `COMMAND_PERIOD_MS` 50, `LIVENESS_MS` 300, `TELEMETRY_PERIOD_MS` 100;
   - `WINDOW_MS` 20 and `WINDOW_BUDGET` 4, `SEQ_WINDOW` 8, `DRAIN_MAX` 128.
 
   Provide the outcomes (accepted, other sender, rate limited, malformed, out of sequence, with a flag for a jump that ends the session), a session-ended flag on `accept` for a lapse found by its own `judge` step or a jump, a session-started flag, the request (`Play(id)`, `Stop`, none), `recordResult` (accepted or rejected by the player), `judge` with its failsafe report, `live`, the telemetry schedule (deadline advanced by the period, re-based when more than one period late), `makeTelemetry` from the player's current and pending motion, the angles and the echo age, and the six counts. Only an accepted frame refreshes liveness. Use unsigned millisecond differences throughout. Verify that `mise run test` builds it.
-- [ ] 2.2 Add `core/test/test_drive_link_session`, with one test per scenario of these requirements:
+- [x] 2.2 Add `core/test/test_drive_link_session`, with one test per scenario of these requirements:
   - Drive port and datagrams, Command frames, Motion requests (with a stand-in player that accepts 1–15, 99 and 100, keeps one pending request and reports current and pending) and Sequence numbers;
   - One remote at a time, Datagram rate limit (the two flood scenarios at the session level), Session start (stop requested on the first accepted frame) and Link loss: live at 300 ms, ended at 301 ms, five losses tolerated, bad-CRC datagrams from the locked sender do not refresh liveness, a jump ends the session, every end reports exactly one failsafe with stop and the safe state with reason `link-loss`, and an end while a request is pending but not started reports the stop;
   - Telemetry frames: the first frame due at session start, then every 100 ms, the late-pass scenario (115 ms send, next deadline still 200 ms), a send more than one period late re-bases the schedule, nothing due without a session, the field values including the echoed sequence and its age capped at 255, angles 255 for released servos, and counts wrapping at 65535;
@@ -40,15 +40,15 @@ The paths follow design.md (D1, D8) and `firmware-foundation`'s layout. If that 
 
 ## 3. Fuzz tests
 
-- [ ] 3.1 Add `core/fuzz/drive_link/targets.{h,cpp}` with `fuzzDecoderOne` and `fuzzSessionOne` (D8), which check the properties of the Decoder and datagram fuzz tests requirement and `abort()` on a violation. The session target checks the per-seed outcome too: a lone golden command frame is accepted as a session's first frame with no request, and a lone telemetry or rejected frame is malformed. Add `core/fuzz/drive_link/libfuzzer_decoder.cpp` and `core/fuzz/drive_link/libfuzzer_session.cpp`, each defining `LLVMFuzzerTestOneInput` for its target. Seed `core/fuzz/drive_link/corpus/decoder/` and `core/fuzz/drive_link/corpus/session/` from every golden line, the session seeds as single-datagram records that hold each golden frame's bytes intact (record lengths up to 40). Verify that the seed files exist, one per golden line and target, that `grep -rn LLVMFuzzerTestOneInput core/drive_link firmware/src` finds nothing, and, after `mise run build`, that the toolchain's `nm` lists no `LLVMFuzzerTestOneInput`, `fuzzDecoderOne` or `fuzzSessionOne` symbol in the firmware ELF.
-- [ ] 3.2 Add `core/test/test_drive_link_fuzz_corpus`, which compiles `core/fuzz/drive_link/targets.cpp` into that test only and runs every file in both corpus directories through its target once. Verify that `mise run test` runs it and passes, and that `mise run build` still passes with no fuzz source in the firmware build.
-- [ ] 3.3 Add the random driver `core/fuzz/drive_link/driver.cpp` and the mise task `fuzz-link` with `--time` (default `60s`). The driver builds with the host compiler, with ASan and UBSan when they link and a warning otherwise. It prints its seed, and on a failure it writes the input to the target's corpus directory and exits non-zero. Verify that `mise run fuzz-link --time 10s` exits 0. Then make a property check fail temporarily, and verify that the run exits non-zero and saves an input. Revert the change and delete the saved input.
+- [x] 3.1 Add `core/fuzz/drive_link/targets.{h,cpp}` with `fuzzDecoderOne` and `fuzzSessionOne` (D8), which check the properties of the Decoder and datagram fuzz tests requirement and `abort()` on a violation. The session target checks the per-seed outcome too: a lone golden command frame is accepted as a session's first frame with no request, and a lone telemetry or rejected frame is malformed. Add `core/fuzz/drive_link/libfuzzer_decoder.cpp` and `core/fuzz/drive_link/libfuzzer_session.cpp`, each defining `LLVMFuzzerTestOneInput` for its target. Seed `core/fuzz/drive_link/corpus/decoder/` and `core/fuzz/drive_link/corpus/session/` from every golden line, the session seeds as single-datagram records that hold each golden frame's bytes intact (record lengths up to 40). Verify that the seed files exist, one per golden line and target, that `grep -rn LLVMFuzzerTestOneInput core/drive_link firmware/src` finds nothing, and, after `mise run build`, that the toolchain's `nm` lists no `LLVMFuzzerTestOneInput`, `fuzzDecoderOne` or `fuzzSessionOne` symbol in the firmware ELF.
+- [x] 3.2 Add `core/test/test_drive_link_fuzz_corpus`, which compiles `core/fuzz/drive_link/targets.cpp` into that test only and runs every file in both corpus directories through its target once. Verify that `mise run test` runs it and passes, and that `mise run build` still passes with no fuzz source in the firmware build.
+- [x] 3.3 Add the random driver `core/fuzz/drive_link/driver.cpp` and the mise task `fuzz-link` with `--time` (default `60s`). The driver builds with the host compiler, with ASan and UBSan when they link and a warning otherwise. It prints its seed, and on a failure it writes the input to the target's corpus directory and exits non-zero. Verify that `mise run fuzz-link --time 10s` exits 0. Then make a property check fail temporarily, and verify that the run exits non-zero and saves an input. Revert the change and delete the saved input.
 
 ## 4. Firmware
 
-- [ ] 4.1 Start the access point in `setup()` as D7 describes. The `WiFi.persistent(false)` call comes before `WiFi.mode(WIFI_AP)`, and there is no station mode, DNS server or mDNS. Verify that `mise run build` passes and that a search of `firmware/` finds no `WiFi.begin`, no `persistent(true)`, no `DNSServer` and no `MDNS`.
-- [ ] 4.2 Add the drive port glue (D1, D4): a `WiFiUDP` socket bound to 52041. Each loop pass drains up to `DRAIN_MAX` datagrams into a 10-byte buffer, using the length from `parsePacket()`, and passes each one to `session::accept` with its sender and `millis()` read at that moment. The pass then calls `session::judge`. This receive and failsafe step runs before motion playback's step in `loop()`; a second step after motion playback's step builds and sends a due telemetry frame to the locked sender. Verify that `mise run build` passes.
-- [ ] 4.3 Connect the session's results to `motion-playback`, `firmware-foundation`'s safe state and `servo-output`:
+- [x] 4.1 Start the access point in `setup()` as D7 describes. The `WiFi.persistent(false)` call comes before `WiFi.mode(WIFI_AP)`, and there is no station mode, DNS server or mDNS. Verify that `mise run build` passes and that a search of `firmware/` finds no `WiFi.begin`, no `persistent(true)`, no `DNSServer` and no `MDNS`.
+- [x] 4.2 Add the drive port glue (D1, D4): a `WiFiUDP` socket bound to 52041. Each loop pass drains up to `DRAIN_MAX` datagrams into a 10-byte buffer, using the length from `parsePacket()`, and passes each one to `session::accept` with its sender and `millis()` read at that moment. The pass then calls `session::judge`. This receive and failsafe step runs before motion playback's step in `loop()`; a second step after motion playback's step builds and sends a due telemetry frame to the locked sender. Verify that `mise run build` passes.
+- [x] 4.3 Connect the session's results to `motion-playback`, `firmware-foundation`'s safe state and `servo-output`:
   - on a session start, call `linkSessionStarted()` and the player's stop;
   - `Play(id)` calls the player's request and records its accept or reject answer; `Stop` calls the player's stop;
   - on a failsafe, call the player's stop unconditionally, then `enterSafe(link-loss)`, then `linkSessionEnded()`, in the same pass;
@@ -60,7 +60,7 @@ The paths follow design.md (D1, D8) and `firmware-foundation`'s layout. If that 
 
 ## 5. Desktop probe
 
-- [ ] 5.1 Write `tools/drive-probe.py` (D9), standard library only. Its options are:
+- [x] 5.1 Write `tools/drive-probe.py` (D9), standard library only. Its options are:
   - `--addr` (default `192.168.4.1:52041`), `--request <motion>@<ms>` (repeatable), `--stop@<ms>` and `--pause <from_ms>:<to_ms>`;
   - `--flood <datagrams per second>` and `--corrupt <fraction>`, with `--sender-port` for a second instance;
   - `--duration`.
@@ -84,4 +84,4 @@ Run this group only after `firmware-foundation`'s hardware checks 6.1 to 6.6 hav
 
 ## 7. Completion
 
-- [ ] 7.1 Run `mise run test`, `mise run build`, `mise run fuzz-link --time 60s` and `openspec validate drive-link --strict`. Verify that all four pass.
+- [x] 7.1 Run `mise run test`, `mise run build`, `mise run fuzz-link --time 60s` and `openspec validate drive-link --strict`. Verify that all four pass.

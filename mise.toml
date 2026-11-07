@@ -72,6 +72,10 @@ run = "python -I tools/extract_motions.py"
 [tasks.check-motions]
 description = "Re-extract the stock motion tables in memory and fail, naming the motion and keyframe, when core/motion/stock_motions.h differs"
 run = "python -I tools/extract_motions.py --check"
+[tasks.fuzz-link]
+description = "Build the drive-link fuzz driver with the host compiler and run each target with random inputs (--time, default 60s)"
+usage = 'flag "--time <time>" default="60s" help="time per target, such as 60s or 2m"'
+run = 'core/fuzz/drive_link/run.sh "${usage_time}"'
 
 # MiniSpooder.pak (handheld/, a Go module with SDL2 and gabagool): the
 # TrimUI Smart Pro remote. Every task that compiles the pak builds against
