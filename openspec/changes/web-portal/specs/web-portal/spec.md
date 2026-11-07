@@ -55,7 +55,7 @@ Every page SHALL show a navigation bar linking the four pages: Controller (`/`),
 - **THEN** the status line says that a remote is driving the robot and that the command was not run, and the page stays open
 
 #### Scenario: Servo button before any motion
-- **WHEN** the operator taps a servo button on the Zero check page while servo output is off
+- **WHEN** the operator taps a servo button on the Zero check page while servo output is in `idle` or `safe` and portal enable is permitted (no remote's session is live)
 - **THEN** the status line says that servo output is off and that a motion, such as Zero position, must be started first
 
 #### Scenario: Robot out of reach
