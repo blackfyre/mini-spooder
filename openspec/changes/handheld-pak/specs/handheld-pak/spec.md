@@ -183,7 +183,7 @@ The pak SHALL show one live screen at 1280×720, redrawn at least 10 times a sec
 - **THEN** the screen shows `DANCE 2` as the robot's motion and `FORWARD` as pending
 
 #### Scenario: Centre named
-- **WHEN** telemetry reports motion 99 playing, started from the web portal
+- **WHEN** telemetry reports motion 99 playing (started from the web portal before the pak's session began, since the portal refuses motions while a drive-link session is live)
 - **THEN** the screen shows `CENTRE` as the robot's motion
 
 #### Scenario: Request taken
@@ -257,7 +257,7 @@ The pak SHALL show the WiFi link's quality: the signal level of `wlan0` in dBm (
 - **THEN** the screen shows the signal as unknown, not as a number
 
 ### Requirement: Leaving safely
-Before its link has started (while the address check or the join message is shown), Menu or the message's quit SHALL exit, and Power SHALL suspend or power off, with no frame sent. Once the link has started, when Menu is pressed, or Power is pressed briefly or held 2 s, the pak SHALL request Standby (motion 1, advancing the motion-request counter once) whether or not the link is live. The rules of Control mapping on one new request per frame and on no motion request after an unconfirmed stop SHALL delay this request but never drop it: it replaces an unsent motion request, and after an unconfirmed stop it is made once the stop is echoed or marked not confirmed. The pak SHALL keep sending command frames and wait until telemetry shows that Standby has finished, for at most 3 s from the press. Standby has finished when a telemetry frame echoing the leave's counter value reports motion 1 neither playing nor pending, after an earlier frame echoing that value reported it playing or pending; a late frame SHALL NOT count, and an echo with the result none yet or rejected SHALL NOT end the wait. Without such a frame, the pak SHALL wait the full 3 s. It SHALL show that it is bringing the robot to Standby while it waits. While it waits, no control SHALL change what it requests, and a second Menu or Power press SHALL NOT start another leave. When the wait ends, it SHALL stop sending command frames, and only then exit (Menu), run NextUI's suspend (a short Power press) or power off (Power held). Standby SHALL be the pak's only safety action on leaving: what the robot does once the pak's frames stop is `drive-link`'s link-loss rule. After a suspend returns, the pak SHALL be driving again, with the link's sequence counting rebaselined, and SHALL take no press until the link is live again.
+Before its link has started (while the address check or the join message is shown), Menu or the message's quit SHALL exit, and Power SHALL suspend or power off, with no frame sent. Once the link has started, when Menu is pressed, or Power is pressed briefly or held 2 s, the pak SHALL request Standby (motion 1, advancing the motion-request counter once) whether or not the link is live. The rules of Control mapping on one new request per frame and on no motion request after an unconfirmed stop SHALL delay this request but never drop it: it replaces an unsent motion request, and after an unconfirmed stop it is made once the stop is echoed or marked not confirmed. The pak SHALL keep sending command frames and wait until telemetry shows that Standby has finished, for at most 3 s from the press. Standby has finished when a telemetry frame echoing the counter value of the leave's newest Standby request reports motion 1 neither playing nor pending, after an earlier frame echoing that value reported it playing or pending; a late frame SHALL NOT count, and an echo with the result none yet or rejected SHALL NOT end the wait. Without such a frame, the pak SHALL wait the full 3 s. It SHALL show that it is bringing the robot to Standby, and that B stops, while it waits. While it waits, B SHALL stay live: a B press SHALL be taken as a stop under the rules of Control mapping (taken while the link is live, otherwise shown as not sent), and the leave SHALL continue: from the moment that stop is taken, no telemetry frame SHALL end the wait as Standby finished until Standby has been requested again; once that stop is echoed or marked not confirmed, the pak SHALL request Standby again (advancing the counter by one) and wait for that request to finish, within the same 3 s from the press that started the leave, which a B press SHALL NOT extend. No other control SHALL change what the pak requests while it waits, and a second Menu or Power press SHALL NOT start another leave. When the wait ends, it SHALL stop sending command frames, and only then exit (Menu), run NextUI's suspend (a short Power press) or power off (Power held). Standby SHALL be the pak's only safety action on leaving: what the robot does once the pak's frames stop is `drive-link`'s link-loss rule. After a suspend returns, the pak SHALL be driving again, with the link's sequence counting rebaselined, and SHALL take no press until the link is live again.
 
 #### Scenario: Leave while idle
 - **WHEN** Menu is pressed while the robot reports no motion and telemetry keeps arriving
@@ -272,8 +272,24 @@ Before its link has started (while the address check or the join message is show
 - **THEN** the frames carry the stop until it is echoed or marked not confirmed, and then request motion 1 with the counter advanced by one more
 
 #### Scenario: Controls during the wait
-- **WHEN** A, B, Start or the D-pad is pressed, or a walking control is held, while the pak waits to leave
+- **WHEN** A, Start or the D-pad is pressed, or a walking control is held, while the pak waits to leave
 - **THEN** nothing else is requested and the counter does not change
+
+#### Scenario: Stop during the wait
+- **WHEN** Menu is pressed while Push up plays with Standby pending behind it, B is pressed while the link is live and the pak waits to leave, and telemetry keeps arriving
+- **THEN** the next command frame carries the stop with the counter advanced by one, Push up ends, and once a telemetry frame echoes the stop's counter value the pak requests motion 1 with the counter advanced by one more, keeps sending until a frame echoing that value reports Standby neither playing nor pending after one that reported it playing or pending, and then sends no further frame and exits
+
+#### Scenario: Stop late in the wait
+- **WHEN** B is pressed during the leave's wait so late that the new Standby request is not seen to finish within 3 s of the Menu press
+- **THEN** the pak sends its last frame 3 s after the Menu press and exits; the B press does not extend the wait
+
+#### Scenario: Stop during the wait without a live link
+- **WHEN** B is pressed while the pak waits to leave and the link is not live
+- **THEN** the stop is shown as not sent, the counter does not change, and the leave continues as before the press
+
+#### Scenario: Stop just before Standby finishes
+- **WHEN** B is taken during the leave's wait and the next telemetry frame, built before the stop arrived, echoes the leave's Standby counter value and reports Standby neither playing nor pending after an earlier frame reported it playing
+- **THEN** the wait does not end on that frame; the stop is sent, Standby is requested again once the stop is echoed or marked not confirmed, and the wait ends only when that new request is seen to finish or 3 s after the press that started the leave
 
 #### Scenario: Leave lost to a new session
 - **WHEN** Menu is pressed and the only telemetry echoing the leave's counter value reports the result none yet
