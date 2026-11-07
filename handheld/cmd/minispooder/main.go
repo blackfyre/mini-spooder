@@ -2,7 +2,7 @@
 // from a TrimUI Smart Pro over the robot's drive link (openspec change
 // handheld-pak). It is the only package that imports gabagool or go-sdl2: it
 // starts gabagool, reads the controls, draws the drive screen, shows the
-// join message and hands the Power button to the app. The rest is
+// join progress and message and hands the Power button to the app. The rest is
 // internal/app, which the tests and the e2e drive without SDL.
 //
 // On the handheld the pak's launch.sh runs it with --device; on desktop
@@ -28,6 +28,7 @@ import (
 	"github.com/BrandonKowalski/gabagool/v2/pkg/gabagool"
 	"github.com/BrandonKowalski/gabagool/v2/pkg/gabagool/constants"
 	"github.com/veandco/go-sdl2/sdl"
+	uatomic "go.uber.org/atomic"
 
 	"github.com/blackfyre/mini-spooder/handheld/internal/app"
 	"github.com/blackfyre/mini-spooder/handheld/internal/fonts"
@@ -162,14 +163,15 @@ func powerButton(current *atomic.Pointer[app.App], long bool) {
 
 // join starts the run, showing the join message (or any other start-up
 // error) with retry and quit until the start succeeds or the user quits:
-// A or Start retries, Menu quits.
+// A or Start retries, Menu quits. On the device the start, which joins the
+// robot's network, runs under a progress screen, where Menu quits too.
 func join(ctx context.Context, cfg app.Config) (*app.Session, bool) {
 	for {
-		s, err := app.Start(ctx, cfg, app.OS())
+		s, err := start(ctx, cfg)
 		if err == nil {
 			return s, true
 		}
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || errors.Is(err, errQuit) {
 			return nil, false
 		}
 		_, err = gabagool.ConfirmationMessage(app.JoinMessage(err), []gabagool.FooterHelpItem{
@@ -180,6 +182,59 @@ func join(ctx context.Context, cfg app.Config) (*app.Session, bool) {
 			return nil, false
 		}
 	}
+}
+
+// errQuit is Menu on the join's progress screen.
+var errQuit = errors.New("quit while joining")
+
+// start is app.Start, under a progress screen on the device. Menu on the
+// screen ends the join, which gives the networks back, and quits
+// (errQuit). However the screen ends, start ends the join and waits for it
+// before returning, so no join outlives it; a session the screen did not
+// hand over is closed.
+func start(ctx context.Context, cfg app.Config) (*app.Session, error) {
+	if !cfg.Device {
+		return app.Start(ctx, cfg, app.OS())
+	}
+	jctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	// gabagool's progress bar reads go.uber.org/atomic's Float64.
+	var progress uatomic.Float64
+	sys := app.OS()
+	sys.Progress = progress.Store
+	type result struct {
+		s   *app.Session
+		err error
+	}
+	done := make(chan result, 1)
+	_, screenErr := gabagool.ProcessMessage(app.JoiningMessage, gabagool.ProcessMessageOptions{
+		ShowProgressBar: true,
+		Progress:        &progress,
+		CancelButton:    constants.VirtualButtonMenu,
+		FooterHelpItems: []gabagool.FooterHelpItem{{ButtonName: "MENU", HelpText: "Quit"}},
+	}, func() (struct{}, error) {
+		s, err := app.Start(jctx, cfg, sys)
+		done <- result{s, err}
+		return struct{}{}, err
+	})
+	var r result
+	select {
+	case r = <-done:
+	default:
+		// The screen ended first (Menu, an SDL quit).
+		cancel()
+		r = <-done
+	}
+	if errors.Is(screenErr, gabagool.ErrCancelled) {
+		screenErr = errQuit
+	}
+	if screenErr != nil && !errors.Is(screenErr, r.err) {
+		if r.s != nil {
+			_ = r.s.Close()
+		}
+		return nil, screenErr
+	}
+	return r.s, r.err
 }
 
 // drive is the main thread's loop while the app drives: it polls SDL for

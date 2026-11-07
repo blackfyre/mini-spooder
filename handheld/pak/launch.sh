@@ -1,11 +1,12 @@
 #!/bin/sh
 # MiniSpooder.pak's launch script: NextUI runs it from Tools/tg5040/MiniSpooder.pak/
-# (openspec change handheld-pak, design D6). It reads wlan0's WiFi
+# (openspec change handheld-pak, designs D6 and D7). It reads wlan0's WiFi
 # power-saving setting, runs minispooder --device (which turns power
-# saving off for the run and restores it itself), and restores the setting
-# however the binary ends: a normal exit, an error, a crash, or a signal to
-# this script, which also stops the binary and any process it left running.
-# Restoring twice is harmless.
+# saving off for the run, joins the robot's network with the other saved
+# networks disabled, and undoes both itself), and undoes both however the
+# binary ends: a normal exit, an error, a crash, or a signal to this script,
+# which also stops the binary and any process it left running. Restoring
+# twice is harmless.
 
 PAK_DIR=$(cd "$(dirname "$0")" && pwd)
 cd "$PAK_DIR" || exit 1
@@ -53,11 +54,24 @@ stop() {
   group=""
 }
 
+# networks gives the saved networks back when a run left any disabled (the
+# binary's select_network disables all but the robot's): enable them all and
+# reassociate, so the device returns to its usual network. Nothing is saved
+# to the supplicant's configuration, and with WiFi off wpa_cli just fails.
+networks() {
+  wpa="wpa_cli -p /etc/wifi/sockets -i wlan0"
+  if $wpa list_networks 2>/dev/null | grep -q '\[DISABLED\]'; then
+    $wpa enable_network all >/dev/null 2>&1
+    $wpa reassociate >/dev/null 2>&1
+  fi
+}
+
 restore() {
   stop
   if [ -n "$saved" ]; then
     iw dev wlan0 set power_save "$saved"
   fi
+  networks
 }
 # restore runs once: on the way out, or for a signal, which then exits.
 trap restore EXIT

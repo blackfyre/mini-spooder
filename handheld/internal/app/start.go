@@ -16,7 +16,7 @@ import (
 // Config is the command line.
 type Config struct {
 	// Device: running on the TrimUI under NextUI, so the WiFi steps and the
-	// address check run and the robot's fixed address is used.
+	// join run and the robot's fixed address is used.
 	Device bool
 	// Addr is the robot's address and port without Device (desktop Linux,
 	// the fake robot).
@@ -70,6 +70,8 @@ type System struct {
 	// Local is the socket's own address, "" for any (the tests reuse a
 	// source port).
 	Local string
+	// Progress, if not nil, gets the share of the join done, from 0 to 1.
+	Progress func(float64)
 }
 
 // OS is the running system.
@@ -85,12 +87,14 @@ type Session struct {
 	// start, or "".
 	Notice string
 	power  *wlan.PowerSave
+	pin    *wlan.Pin
 }
 
-// Start prepares a run. With Device it checks wlan0's address first (a
-// *wlan.NotJoinedError when it is not on the robot's network: show its
-// message and call Start again to retry), then reads WiFi power saving and
-// turns it off; without Device it runs no WiFi command at all. Then it
+// Start prepares a run. With Device it first brings wlan0 onto the robot's
+// network (wlan.Join; a *wlan.NotJoinedError when that fails, with the
+// other networks given back: show its message and call Start again to
+// retry), then reads WiFi power saving and turns it off; without Device it
+// runs no WiFi command at all. Then it
 // makes the link's socket, whose silence starts now. Nothing is sent until
 // Run, and nothing in the silence.
 func Start(ctx context.Context, cfg Config, sys System) (*Session, error) {
@@ -99,9 +103,11 @@ func Start(ctx context.Context, cfg Config, sys System) (*Session, error) {
 	var readFile func(string) ([]byte, error)
 	var run wlan.Runner
 	if cfg.Device {
-		if err := wlan.CheckAddress(ctx, sys.Runner, sys.Addrs); err != nil {
+		pin, err := wlan.Join(ctx, sys.Runner, sys.Addrs, sys.Progress)
+		if err != nil {
 			return nil, err
 		}
+		s.pin = pin
 		// A setting that cannot be read is left alone: driving with power
 		// saving on is slower to react, not unsafe.
 		p, err := wlan.ReadPowerSave(ctx, sys.Runner)
@@ -154,8 +160,9 @@ func (s *Session) Run(ctx context.Context) error {
 	return err
 }
 
-// Close closes the link and restores the WiFi power-saving setting read at
-// the start. It is safe to call more than once.
+// Close closes the link, restores the WiFi power-saving setting read at the
+// start and, when Start joined the robot's network, gives the other saved
+// networks back. It is safe to call more than once.
 func (s *Session) Close() error {
 	var errs []error
 	if s.Link != nil {
@@ -164,6 +171,9 @@ func (s *Session) Close() error {
 	}
 	if s.power != nil {
 		errs = append(errs, s.power.Restore(context.Background()))
+	}
+	if s.pin != nil {
+		errs = append(errs, s.pin.Restore())
 	}
 	return errors.Join(errs...)
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/blackfyre/mini-spooder/handheld/internal/motions"
 	"github.com/blackfyre/mini-spooder/handheld/internal/padmap"
 	"github.com/blackfyre/mini-spooder/handheld/internal/protocol"
+	"github.com/blackfyre/mini-spooder/handheld/internal/wlan"
 )
 
 // GPIOs is the GPIO each servo index is attached to (design A9: the stock
@@ -244,6 +245,10 @@ func robotView(have, stale bool, t protocol.Telemetry) Robot {
 
 // Title is the drive screen's title, without its orange full stop.
 const Title = "MINISPOODER"
+
+// JoiningMessage is the progress screen's text while the pak joins the
+// robot's network.
+const JoiningMessage = "Joining the robot's network " + wlan.RobotSSID + "..."
 
 // JoinMessage is the join instructions for err, shown with retry and quit.
 func JoinMessage(err error) string {

@@ -7,6 +7,7 @@ toolchain go1.27.1
 require (
 	github.com/BrandonKowalski/gabagool/v2 v2.26.6
 	github.com/veandco/go-sdl2 v0.4.40
+	go.uber.org/atomic v1.11.0
 )
 
 require (
@@ -15,7 +16,6 @@ require (
 	github.com/holoplot/go-evdev v0.0.0-20250804134636-ab1d56a1fe83 // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
-	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678 // indirect
 	golang.org/x/image v0.34.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
