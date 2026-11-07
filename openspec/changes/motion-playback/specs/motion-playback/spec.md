@@ -184,7 +184,7 @@ After a reset the player SHALL write nothing to servo output, and SHALL send it 
 
 At the first tick of a motion or keyframe accepted while the player is idle, the player SHALL send servo output one enable request carrying a complete pose:
 
-- when servo output reports a mode other than active, the zero pose; that tick SHALL write nothing else, and the motion or keyframe SHALL run from the zero pose, starting at its next tick;
+- when servo output reports a mode other than active, the zero pose, 135, 45, 135, 45, 45, 135, 45, 135 for servos 0–7 (motion 100's pose, which stock attaches at boot); that tick SHALL write nothing else, and the motion or keyframe SHALL run from the zero pose, starting at its next tick;
 - when servo output reports active, its eight commanded angles, so that no servo moves because of the request; the motion's first tick SHALL then run in the same tick.
 
 Each motion request and each keyframe SHALL carry the origin of its caller, as servo output names origins (`link` for the drive link, `portal` for the web portal, `check` for the demonstration build), and the player SHALL keep it with the request. The enable request SHALL carry the origin of the motion or keyframe whose first tick sends it.
@@ -196,7 +196,7 @@ At every service call while a motion or keyframe is under way (after the tick th
 #### Scenario: First command after reset
 
 - **WHEN** motion 1 is requested for the first time after a reset
-- **THEN** the player sends servo output an enable request with the zero pose at the first tick and then plays Standby from the zero pose, 41 ticks in all
+- **THEN** the player sends servo output an enable request with the pose 135, 45, 135, 45, 45, 135, 45, 135 at the first tick, writes nothing else in that tick and then plays Standby from that pose, 41 ticks in all
 
 #### Scenario: Origin of the enable request
 
@@ -223,10 +223,15 @@ At every service call while a motion or keyframe is under way (after the tick th
 - **WHEN** motion 2 is requested and servo output refuses the player's enable request
 - **THEN** the player writes nothing, discards the pending request and reports itself idle
 
-#### Scenario: Output enabled by another caller
+#### Scenario: Output enabled by a direct servo command
 
-- **WHEN** a motion ended, servo output then entered its safe state and another caller enabled output again with the standby pose while the player was idle, and motion 8 is then requested
-- **THEN** at the first tick the player sends an enable request with servo output's commanded angles (the standby pose), no servo moves because of it, Lie's first tick runs in the same tick and Lie plays from the standby pose to the end
+- **WHEN** a motion ended, servo output then entered its safe state, a direct servo command then enabled output again with the zero pose and set servo 2 to 120 while the player was idle, and motion 8 is then requested
+- **THEN** at the first tick the player sends an enable request with servo output's commanded angles (the zero pose with servo 2 at 120), no servo moves because of it, Lie's first tick runs in the same tick and Lie starts servo 2 from 120
+
+#### Scenario: Direct servo command does not start the player
+
+- **WHEN** the player is idle after a reset and a direct servo command enables output and sets one servo
+- **THEN** the player writes nothing, sends no enable request and reports itself idle
 
 ### Requirement: Single keyframe
 
