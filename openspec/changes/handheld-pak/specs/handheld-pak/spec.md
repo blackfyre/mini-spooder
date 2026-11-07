@@ -2,7 +2,7 @@
 
 ## Purpose
 
-MiniSpooder.pak: a NextUI tool pak on a TrimUI Smart Pro that plays the robot's stock motions over the drive link (`drive-link`) on the robot's own access point, shows what the robot reports and the link's quality, and leaves the robot at rest when it exits; with the rules for building, installing and testing it without the robot.
+MiniSpooder.pak: a NextUI tool pak on a TrimUI Smart Pro that plays the robot's stock motions over the drive link (`drive-link`) on the robot's own access point, keeps a walking motion going while its control is held, shows what the robot reports and the link's quality, and brings the robot to Standby before it leaves; with the rules for building, installing and testing it without the robot.
 
 ## ADDED Requirements
 
@@ -22,7 +22,7 @@ The pak SHALL be delivered as a zip of one folder, `MiniSpooder.pak`, which the 
 - **THEN** NextUI lists both tools, and running MiniSpooder changes no file inside `Spooder.pak`
 
 ### Requirement: Desktop build
-The same program SHALL also build for desktop Linux (amd64). Started without the device flag, it SHALL use the robot address given on its command line (defaulting to the drive link's robot address and port), SHALL run no WiFi step, no address check and no power-saving change, and SHALL leave the Power button unhandled; everything else (mapping, frames, screen, leaving with Menu) SHALL behave as on the device.
+The same program SHALL also build for desktop Linux (amd64). Started without the device flag, it SHALL use the robot address given on its command line (defaulting to the drive link's robot address and port), SHALL run no WiFi step, no address check and no power-saving change, and SHALL leave the Power button unhandled; everything else (mapping, repetition, frames, screen, leaving with Menu) SHALL behave as on the device.
 
 #### Scenario: Desktop start against the fake robot
 - **WHEN** the desktop build's start-up is given the fake robot's loopback address and no device flag
@@ -44,7 +44,7 @@ With the device flag, before it sends any command frame, the pak SHALL check tha
 - **THEN** the pak shows the robot's network name and password and the current network, sends no datagram, and checks again (renewing once more) only when the user chooses retry
 
 ### Requirement: Command datagrams
-When its link starts, and again when it resumes from suspend, the pak SHALL send nothing to the robot for at least 350 ms, the silence `drive-link` requires of a remote before its first frame. After that it SHALL send one command frame per UDP datagram to the robot's address and port, at `drive-link`'s 50 ms command period, every frame being `drive-link`'s command frame carrying the pak's complete desired state: its requested motion (0 for stop) and `drive-link`'s single motion-request counter, with the frame sequence number advancing by one per frame. It SHALL send every datagram of a run, including those after a suspend and resume, from one socket bound once, so from one source port. Its frames of a run SHALL carry motion 0 and counter 0 until the first press is taken, and a motion SHALL be requested only by a control press made during the run. A failed send SHALL be counted and SHALL NOT stop the next period's send.
+When its link starts, and again when it resumes from suspend, the pak SHALL send nothing to the robot for at least 350 ms, the silence `drive-link` requires of a remote before its first frame. After that it SHALL send one command frame per UDP datagram to the robot's address and port, at `drive-link`'s 50 ms command period, every frame being `drive-link`'s command frame carrying the pak's complete desired state: its requested motion (0 for stop) and `drive-link`'s single motion-request counter, with the frame sequence number advancing by one per frame. It SHALL send every datagram of a run, including those after a suspend and resume, from one socket bound once, so from one source port. Its frames of a run SHALL carry motion 0 and counter 0 until its first request is made, and it SHALL make a request only for a control press made during the run, for a repetition of a held walking control (see Hold to repeat), or for the leave's Standby (see Leaving safely). Once a leave has finished waiting, it SHALL send no further frame until a suspend returns. A failed send SHALL be counted and SHALL NOT stop the next period's send.
 
 #### Scenario: Silence before the first frame
 - **WHEN** the pak starts its link, or resumes from suspend
@@ -67,7 +67,7 @@ When its link starts, and again when it resumes from suspend, the pak SHALL send
 - **THEN** the send-error count rises by one and the next period's frame is sent
 
 ### Requirement: Control mapping
-The pak SHALL map its controls to motion requests and stop requests as follows, each acting once on its press, with no repeat while held and nothing on release:
+The pak SHALL map its controls to motion requests and stop requests as follows, each acting once on its press and with nothing on release; only the walking controls are also repeated while held (see Hold to repeat):
 
 | Control | Request |
 |---|---|
@@ -79,11 +79,11 @@ The pak SHALL map its controls to motion requests and stop requests as follows, 
 | L2 held, then A / X / Y | motion 8 Lie / 12 Sleep / 100 Zero position |
 | B, with or without a trigger held | stop |
 
-A press SHALL be taken only while the link is live: at least two telemetry frames have been accepted since the first command frame after the link last started, resumed or was lost (see Link quality) was sent, and the frame last taken as newest was accepted no more than 250 ms ago. A datagram read during the silence before the first frame SHALL be discarded without being counted or shown. Each command frame SHALL carry at most one new request: a motion press made after a request has been set and before any frame carrying it has been sent SHALL NOT be taken, while a stop press in that time SHALL replace the unsent request. After a stop, a motion press SHALL NOT be taken until a telemetry frame echoes the stop's counter value or the stop is marked not confirmed; a stop press SHALL always be taken while the link is live. A press while the link is not live SHALL request nothing, change no counter and be shown as not sent; it SHALL NOT be queued. A motion request SHALL set the requested motion to that id and advance the motion-request counter by one; a stop SHALL set the requested motion to 0 and advance the same counter by one, wrapping from 255 to 0. No control SHALL request motion 99 (Centre), which the stock controller page offers no button for. L2 and R2 SHALL count as held beyond half travel. While both L2 and R2 are held, A, X and Y SHALL request nothing. A face button's layer SHALL be the one held at the moment it is pressed. Select SHALL have no function. Menu and Power SHALL NOT reach the mapping. The left and right sticks SHALL request nothing.
+A press SHALL be taken only while the link is live: at least two telemetry frames have been accepted since the first command frame after the link last started, resumed or was lost (see Link quality) was sent, and the frame last taken as newest was accepted no more than 250 ms ago. A datagram read during the silence before the first frame SHALL be discarded without being counted or shown. Each command frame SHALL carry at most one new request: a motion request made after a request has been set and before any frame carrying it has been sent SHALL NOT be made, while a stop in that time SHALL replace the unsent request. After a stop, no motion request SHALL be made until a telemetry frame echoes the stop's counter value or the stop is marked not confirmed; a stop press SHALL always be taken while the link is live. A press that is not taken SHALL request nothing, change no counter and be shown as not sent; it SHALL NOT be queued. A motion request SHALL set the requested motion to that id and advance the motion-request counter by one; a stop SHALL set the requested motion to 0 and advance the same counter by one, wrapping from 255 to 0. No control SHALL request motion 99 (Centre), which the stock controller page offers no button for. L2 and R2 SHALL count as held beyond half travel. While both L2 and R2 are held, A, X and Y SHALL request nothing. A face button's layer SHALL be the one held at the moment it is pressed. Select SHALL have no function. Menu and Power SHALL NOT reach the mapping. The left and right sticks SHALL request nothing.
 
 #### Scenario: One request per press
-- **WHEN** D-pad up is pressed and held for 2 s, then released
-- **THEN** the frames after the press request motion 2 with the motion-request counter advanced by exactly one, and neither the hold nor the release advances it again
+- **WHEN** A is pressed and held for 10 s, then released
+- **THEN** the frames after the press request motion 9 with the motion-request counter advanced by exactly one, and neither the hold nor the release advances it again
 
 #### Scenario: Layer from the trigger
 - **WHEN** R2 is pressed beyond half travel and A is then pressed
@@ -102,12 +102,16 @@ A press SHALL be taken only while the link is live: at least two telemetry frame
 - **THEN** the next frame carries motion 0 with the motion-request counter advanced by one
 
 #### Scenario: Stop after a motion request
-- **WHEN** D-pad up and then B are pressed while the link is live, each press in a different command period
+- **WHEN** D-pad up is pressed and released and then B is pressed while the link is live, each press in a different command period
 - **THEN** the counter advances once with motion 2 and once more with motion 0, so the robot receives two requests
 
 #### Scenario: Standby pressed right after stop
 - **WHEN** a motion plays, B is pressed, and Start is pressed before any telemetry frame has echoed the stop's counter value
 - **THEN** the frames carry the stop with its counter value until the echo arrives, Start is shown as not sent, and the robot receives the stop
+
+#### Scenario: Stop and Standby in one period
+- **WHEN** B and then Start are pressed before the next command frame is sent
+- **THEN** the next frame carries the stop with the counter advanced by one, and Start is shown as not sent
 
 #### Scenario: Two presses in one period
 - **WHEN** D-pad up and then A are pressed before the next command frame is sent
@@ -126,11 +130,38 @@ A press SHALL be taken only while the link is live: at least two telemetry frame
 - **THEN** they are discarded without being counted, the link is not live, and a press is not taken
 
 #### Scenario: Every stock motion reachable
-- **WHEN** each control of the table is pressed in turn while the link is live
+- **WHEN** each control of the table is pressed and released in turn while the link is live
 - **THEN** the requested motion ids cover 1–15 and 100, each exactly once
 
+### Requirement: Hold to repeat
+The walking controls SHALL be D-pad up, down, left and right and L1 and R1 (motions 2–7). While a walking control whose press was taken stays held, and the pak's newest request is that press's motion request or a repetition of it, the pak SHALL request the same motion again each time telemetry shows that this newest request has ended, as a new motion request under the rules of Control mapping. A request has ended when a telemetry frame that echoes its counter value with the result accepted reports that motion neither playing nor pending, after an earlier telemetry frame echoing the same counter value reported it playing or pending. The pak SHALL make at most one repetition for each ended request. Repetition SHALL end, and only a new press of a walking control SHALL start it again, when the control is released, when any other request is made (another press, a stop or the leave's Standby), when the newest request is echoed with a result other than accepted, or when the link is not live. Releasing the control SHALL request nothing. The robot plays each request once (`motion-playback`); repetition is the pak's alone, and no other control SHALL repeat.
+
+#### Scenario: Walking while held
+- **WHEN** D-pad up is pressed while the link is live and held, and telemetry echoing the request reports Forward playing and then neither playing nor pending
+- **THEN** the next frame requests motion 2 with the counter advanced by one, and this repeats each time the newest Forward has ended, for as long as D-pad up is held
+
+#### Scenario: Release ends the walk
+- **WHEN** D-pad up is released while a repeated Forward plays
+- **THEN** the counter does not change again, and that Forward plays to its end as `motion-playback` plays it
+
+#### Scenario: Stop while walking
+- **WHEN** D-pad up is held with Forward repeating and B is pressed
+- **THEN** the stop is requested, and no further Forward is requested while D-pad up stays held
+
+#### Scenario: Another walking control while held
+- **WHEN** D-pad up is held with Forward repeating and D-pad left is pressed and held
+- **THEN** motion 6 is requested once on the press, Forward is no longer repeated, and Turn left is repeated while D-pad left is held
+
+#### Scenario: Link lost while walking
+- **WHEN** D-pad up is held with Forward repeating and the link stops being live
+- **THEN** no further Forward is requested, including after the link is live again, until D-pad up is pressed again
+
+#### Scenario: Not seen playing
+- **WHEN** D-pad up is held and every telemetry frame echoing the request reports Forward neither playing nor pending
+- **THEN** Forward is not requested again
+
 ### Requirement: Received frames
-The pak SHALL accept a datagram only when it comes from the robot's address and port and holds exactly one valid telemetry frame (version, type, length and CRC as `drive-link` defines them) spanning the whole datagram. It SHALL drop every other datagram, counting as invalid each one from the robot's address and port, and SHALL never act on the contents of a dropped datagram. Accepted frames SHALL change only what the screen shows and the leave confirmation, never what the pak requests.
+The pak SHALL accept a datagram only when it comes from the robot's address and port and holds exactly one valid telemetry frame (version, type, length and CRC as `drive-link` defines them) spanning the whole datagram. It SHALL drop every other datagram, counting as invalid each one from the robot's address and port, and SHALL never act on the contents of a dropped datagram. Accepted frames SHALL change only what the screen shows, whether the link is live, the status of the pak's requests (and so when a delayed request may be made, see Control mapping and Leaving safely), when a leave finishes waiting, and when a held walking control's motion is requested again; no telemetry frame SHALL choose which motion the pak requests.
 
 #### Scenario: Valid telemetry
 - **WHEN** a datagram from the robot's address and port holds exactly one valid telemetry frame
@@ -145,25 +176,25 @@ The pak SHALL accept a datagram only when it comes from the robot's address and 
 - **THEN** it is dropped and nothing on the screen changes
 
 ### Requirement: Drive screen
-The pak SHALL show one live screen at 1280×720, redrawn at least 10 times a second. From the newest telemetry it SHALL show the motion the robot reports by its stock name (the ids 1–15, 99 and 100 of `motion-playback`; `MOTION <n>` for an id it does not know, and `IDLE` for none), the eight joint angles in degrees labelled by servo index and its GPIO (`---` for an angle the robot reports as not commanded), and the robot's own link statistics. From its own state it SHALL show the last request, by motion name or as stop, with its status: `NOT SENT` when the press was not taken, `REQUESTED` until a telemetry frame echoes the request's counter value, then `TAKEN` when the echoed result is motion started or stop requested, `UNKNOWN` when it is unknown motion, `NOT TAKEN` when the counter value is echoed as a new session's baseline with no result, and `NOT CONFIRMED` when no echo has arrived 1 s after the request. It SHALL show the active control layer with the motion each of A, X and Y would request in it. It SHALL show the link's quality (see Link quality) and, along the bottom, the controls for stop, standby and leaving. When no telemetry frame has been taken as newest for 500 ms, it SHALL mark the robot's values as stale, keeping the last values visible. Frames SHALL be shown in sequence order: a telemetry frame older by its sequence number than the one shown SHALL NOT replace it, except a frame that rebaselines the sequence (see Link quality), which SHALL be shown whatever its sequence number.
+The pak SHALL show one live screen at 1280×720, redrawn at least 10 times a second. From the newest telemetry it SHALL show the motion the robot reports as playing and the motion it reports as pending, each by its stock name (the ids 1–15, 99 and 100 of `motion-playback`; `MOTION <n>` for an id it does not know, and `IDLE` or `NONE` for 0), the eight joint angles in degrees labelled by servo index and its GPIO (`---` for an angle reported as 255, not commanded or output disabled), and the robot's own link statistics. From its own state it SHALL show the last request, by motion name or as stop, with its status: `NOT SENT` when the press was not taken, `REQUESTED` until a telemetry frame echoes the request's counter value, then `TAKEN` when the echoed result is accepted or stop requested, `REJECTED` when it is rejected, `NOT TAKEN` when the counter value is echoed with the result none yet (a new session's baseline), and `NOT CONFIRMED` when no echo has arrived 1 s after the request; and whether a walking motion is being repeated. It SHALL show the active control layer with the motion each of A, X and Y would request in it. It SHALL show the link's quality (see Link quality) and, along the bottom, the controls for stop, standby and leaving. When no telemetry frame has been taken as newest for 500 ms, it SHALL mark the robot's values as stale, keeping the last values visible. Frames SHALL be shown in sequence order: a telemetry frame older by its sequence number than the one shown SHALL NOT replace it, except a frame that rebaselines the sequence (see Link quality), which SHALL be shown whatever its sequence number.
 
 #### Scenario: Motion by name
-- **WHEN** telemetry reports motion 14 playing
-- **THEN** the screen shows `DANCE 2` as the robot's motion
+- **WHEN** telemetry reports motion 14 playing and motion 2 pending
+- **THEN** the screen shows `DANCE 2` as the robot's motion and `FORWARD` as pending
 
 #### Scenario: Centre named
 - **WHEN** telemetry reports motion 99 playing, started from the web portal
 - **THEN** the screen shows `CENTRE` as the robot's motion
 
 #### Scenario: Request taken
-- **WHEN** the pak requests Forward with counter value 5, and a telemetry frame then echoes counter 5 with the result motion started
+- **WHEN** the pak requests Forward with counter value 5, and a telemetry frame then echoes counter 5 with the result accepted
 - **THEN** the screen shows Forward as the last request, marked `TAKEN`
 
 #### Scenario: Request lost to a new session
 - **WHEN** the pak requests Forward with counter value 5, and a telemetry frame then echoes counter 5 with the result none yet
 - **THEN** the screen shows Forward as the last request, marked `NOT TAKEN`
 
-#### Scenario: Servo not commanded
+#### Scenario: Servo not commanded or limp
 - **WHEN** telemetry reports 255 for servo 4
 - **THEN** the well for servo 4 (GPIO 2) shows `---`, not a number
 
@@ -191,7 +222,7 @@ The drive screen and the pak's message screens SHALL follow the Blackfyre design
 - **THEN** the screen shows the word `STALE`, not only a change of colour
 
 ### Requirement: Link quality
-The pak SHALL show the WiFi link's quality: the signal level of `wlan0` in dBm (or unknown), with a dot labelled by level, `bf-ok` from -67 dBm, `bf-warn` from -80 dBm and `bf-accent` below; telemetry frames received in the last second; invalid datagrams, lost frames (gaps in the robot's telemetry sequence numbers), late frames (a sequence number not newer than the newest) and send errors, counted since start; and the time since the last valid frame. The first valid frame of a run, the first after a resume from suspend and the first after 500 ms without a frame taken as newest (so also when every valid frame for 500 ms was late, as after a robot restart whose sequence starts again lower) SHALL set the newest sequence number without counting a frame lost or late. Sequence comparisons SHALL wrap modulo the sequence number's range. It SHALL NOT show a round-trip time.
+The pak SHALL show the WiFi link's quality: the signal level of `wlan0` in dBm (or unknown), with a dot labelled by level, `bf-ok` from -67 dBm, `bf-warn` from -80 dBm and `bf-accent` below; telemetry frames received in the last second; invalid datagrams, lost frames (gaps in the robot's telemetry sequence numbers), late frames (a sequence number not newer than the newest) and send errors, counted since start; the time since the last valid frame; and the round-trip time. The round-trip time SHALL be computed from the newest telemetry frame shown, as the time it was received, minus the send time of the pak's most recent command frame with the sequence number the telemetry echoes, minus the age the telemetry reports for that frame; it SHALL be shown as unknown when the reported age is 255, when that command frame was sent more than 1 s before the telemetry was received, or when the result is negative. The first valid frame of a run, the first after a resume from suspend and the first after 500 ms without a frame taken as newest (so also when every valid frame for 500 ms was late, as after a robot restart whose sequence starts again lower) SHALL set the newest sequence number without counting a frame lost or late. Sequence comparisons SHALL wrap modulo the sequence number's range.
 
 #### Scenario: Loss from sequence numbers
 - **WHEN** telemetry frames arrive with sequence numbers 10, 11, 14
@@ -213,32 +244,52 @@ The pak SHALL show the WiFi link's quality: the signal level of `wlan0` in dBm (
 - **WHEN** telemetry 100 is shown and the robot restarts, sending telemetry 0, 1, 2 … every 100 ms
 - **THEN** those frames are counted late and the values are marked stale until 500 ms after frame 100 was taken, and the first frame after that is shown and taken as newest without being counted late
 
+#### Scenario: Round-trip time
+- **WHEN** the pak sends command frame 40 at time T, and receives at T + 30 ms a telemetry frame echoing command frame 40 with an age of 10 ms
+- **THEN** the screen shows a round-trip time of 20 ms
+
+#### Scenario: Round-trip time unknown
+- **WHEN** the newest telemetry frame reports an age of 255
+- **THEN** the screen shows the round-trip time as unknown, not as a number
+
 #### Scenario: Signal unknown
 - **WHEN** neither source of the signal level gives a value
 - **THEN** the screen shows the signal as unknown, not as a number
 
 ### Requirement: Leaving safely
-When Menu is pressed, or Power is pressed briefly or held 2 s, the pak SHALL first request stop (motion 0, advancing the motion-request counter once, whether or not the link is live), keep sending command frames, and wait until a telemetry frame newer by its sequence number than every telemetry frame taken before the press echoes that stop's counter value and reports no motion playing, for at most 3 s from the press. The stop SHALL be the pak's only safety action on leaving: it ends the motion and the robot holds its pose; what the robot does once the pak's frames stop is `drive-link`'s link-loss rule. It SHALL show that it is stopping the robot while it waits. While it waits, no control SHALL change what it requests, and a second Menu or Power press SHALL NOT start another leave. Only then SHALL it exit (Menu), run NextUI's suspend (a short Power press) or power off (Power held). With no telemetry arriving, it SHALL wait the full 3 s before it acts. After a suspend returns, the pak SHALL be driving again, with the link's sequence counting rebaselined, and SHALL take no press until the link is live again.
+Before its link has started (while the address check or the join message is shown), Menu or the message's quit SHALL exit, and Power SHALL suspend or power off, with no frame sent. Once the link has started, when Menu is pressed, or Power is pressed briefly or held 2 s, the pak SHALL request Standby (motion 1, advancing the motion-request counter once) whether or not the link is live. The rules of Control mapping on one new request per frame and on no motion request after an unconfirmed stop SHALL delay this request but never drop it: it replaces an unsent motion request, and after an unconfirmed stop it is made once the stop is echoed or marked not confirmed. The pak SHALL keep sending command frames and wait until telemetry shows that Standby has finished, for at most 3 s from the press. Standby has finished when a telemetry frame echoing the leave's counter value reports motion 1 neither playing nor pending, after an earlier frame echoing that value reported it playing or pending; a late frame SHALL NOT count, and an echo with the result none yet or rejected SHALL NOT end the wait. Without such a frame, the pak SHALL wait the full 3 s. It SHALL show that it is bringing the robot to Standby while it waits. While it waits, no control SHALL change what it requests, and a second Menu or Power press SHALL NOT start another leave. When the wait ends, it SHALL stop sending command frames, and only then exit (Menu), run NextUI's suspend (a short Power press) or power off (Power held). Standby SHALL be the pak's only safety action on leaving: what the robot does once the pak's frames stop is `drive-link`'s link-loss rule. After a suspend returns, the pak SHALL be driving again, with the link's sequence counting rebaselined, and SHALL take no press until the link is live again.
 
-#### Scenario: Leave while a motion plays
-- **WHEN** Menu is pressed while telemetry reports Forward playing and telemetry keeps arriving
-- **THEN** the next command frame carries motion 0 with the counter advanced by one, and the pak exits when a telemetry frame newer than the press echoes that counter value and reports no motion playing, and not before, unless 3 s pass first
+#### Scenario: Leave while idle
+- **WHEN** Menu is pressed while the robot reports no motion and telemetry keeps arriving
+- **THEN** the next command frame requests motion 1 with the counter advanced by one, the pak keeps sending until a telemetry frame echoing that counter value reports Standby neither playing nor pending after one that reported it playing or pending, then sends no further frame and exits
 
-#### Scenario: Delayed idle frame
-- **WHEN** Menu is pressed while a motion plays, and a telemetry frame reporting no motion arrives that echoes an earlier counter value, or that is older than the newest frame taken before the press
-- **THEN** the pak does not exit on that frame
+#### Scenario: Leave during a long motion
+- **WHEN** Menu is pressed while Push up plays with more than 3 s of it left and telemetry keeps arriving
+- **THEN** Standby is requested, the pak sends its last frame 3 s after the press, and then exits
+
+#### Scenario: Leave right after a stop
+- **WHEN** B is pressed and Menu is pressed before any telemetry frame has echoed the stop's counter value
+- **THEN** the frames carry the stop until it is echoed or marked not confirmed, and then request motion 1 with the counter advanced by one more
 
 #### Scenario: Controls during the wait
-- **WHEN** A, Start or the D-pad is pressed while the pak waits to leave
-- **THEN** no motion is requested and the counter does not change
+- **WHEN** A, B, Start or the D-pad is pressed, or a walking control is held, while the pak waits to leave
+- **THEN** nothing else is requested and the counter does not change
 
-#### Scenario: Robot does not confirm
+#### Scenario: Leave lost to a new session
+- **WHEN** Menu is pressed and the only telemetry echoing the leave's counter value reports the result none yet
+- **THEN** the pak keeps sending command frames until 3 s after the press and then exits
+
+#### Scenario: Quit before the link starts
+- **WHEN** the join message is shown and the user chooses quit or presses Menu
+- **THEN** the pak exits without having sent any datagram, with power saving restored
+
+#### Scenario: Robot does not answer
 - **WHEN** Menu is pressed and no telemetry arrives
-- **THEN** the pak exits 3 s after the press
+- **THEN** the pak sends command frames for 3 s after the press and then exits
 
 #### Scenario: Power pressed briefly
 - **WHEN** Power is pressed briefly while the robot is idle and telemetry keeps arriving
-- **THEN** the stop is requested and confirmed before the suspend runs, and after resume no press is taken until the link is live again
+- **THEN** Standby is requested and seen to finish, the pak stops sending, the suspend runs, and after resume no press is taken until the link is live again
 
 ### Requirement: WiFi power saving
 With the device flag, at start the pak SHALL read the WiFi power-saving setting of `wlan0` and turn it off. However the pak exits (Menu, a signal, a crash of the binary, or power-off through the pak), it SHALL restore the setting it read and stop every process it started. It SHALL restore the setting before it suspends or powers off, and turn power saving off again when a suspend returns.
@@ -256,18 +307,22 @@ With the device flag, at start the pak SHALL read the WiFi power-saving setting 
 - **THEN** the launch script restores the setting it read
 
 ### Requirement: Fake robot
-The project SHALL provide a fake robot for tests and desktop runs that listens on a loopback UDP address and follows `drive-link`'s contract towards a remote (its session, one-remote, sequence, counter, telemetry and link-loss rules, as `drive-link` specifies them, including motion 0 as stop and the echo of the last processed counter value and its result), standing in for the motions by reporting a requested motion as playing for a fixed time per motion and then idle, holding a request made while a motion plays as `motion-playback`'s single pending request, and reporting idle after a stop or link loss. It SHALL allow tests to drop or corrupt the telemetry it sends. It SHALL NOT model gaits or joint motion beyond reporting fixed joint angles.
+The project SHALL provide a fake robot for tests and desktop runs that listens on a loopback UDP address and follows `drive-link`'s contract towards a remote (its session, one-remote, sequence, counter, telemetry and link-loss rules, as `drive-link` specifies them, including motion 0 as stop, the echo of the last processed counter value and its result, and the echo of the newest accepted command frame's sequence number and age), standing in for the motions by reporting a requested motion as playing for a fixed time per motion and then idle, holding a request made while a motion plays as `motion-playback`'s single pending request and reporting it as pending, and reporting idle after a stop or link loss. It SHALL allow tests to drop or corrupt the telemetry it sends. It SHALL NOT model gaits or joint motion beyond reporting fixed joint angles.
 
 #### Scenario: Plays and stops
 - **WHEN** the pak requests motion 2 and then stop
-- **THEN** the fake robot's telemetry reports motion 2 playing with the result motion started, then no motion with the result stop requested, echoing each request's counter value, and the pak's lost and invalid counts stay zero
+- **THEN** the fake robot's telemetry reports motion 2 playing with the result accepted, then no motion with the result stop requested, echoing each request's counter value, and the pak's lost and invalid counts stay zero
+
+#### Scenario: Pending request
+- **WHEN** the pak requests motion 4 while the fake robot plays motion 2
+- **THEN** its telemetry reports motion 2 playing and motion 4 pending, and motion 4 playing once motion 2's time has passed
 
 #### Scenario: Restarted remote within the liveness time
 - **WHEN** a sender's frames stop, and within 300 ms the same address and port sends frames whose sequence number is 9 to 127 ahead modulo 256 and whose counter has changed
 - **THEN** the fake robot ends the session, takes the next frame as a new session's baseline, and makes no request
 
 #### Scenario: Old frame keeps the session
-- **WHEN** a frame whose sequence number is 128 to 255 behind modulo 256, or equal to the last accepted one, arrives from the locked sender
+- **WHEN** a frame arrives from the locked sender whose sequence number minus the last accepted one, modulo 256, is 0 or 128 to 255
 - **THEN** the fake robot discards it, keeps the session and makes no request
 
 #### Scenario: Second remote ignored
