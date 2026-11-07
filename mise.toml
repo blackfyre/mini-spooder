@@ -53,7 +53,7 @@ fi
 mise run build || exit 1
 # Writes firmware.bin at 0x0 only, with no erase: 0x3FB000-0x3FFFFF (the
 # calibration and SDK data sectors) are left as they are.
-pio run -d firmware -e robot -t nobuild -t upload --upload-port "$ROBOT_PORT"
+pio run -d firmware -e robot -t upload --upload-port "$ROBOT_PORT"
 '''
 
 [tasks.test]
