@@ -187,14 +187,21 @@ At the first tick of a motion or keyframe accepted while the player is idle, the
 - when servo output reports a mode other than active, the zero pose; that tick SHALL write nothing else, and the motion or keyframe SHALL run from the zero pose, starting at its next tick;
 - when servo output reports active, its eight commanded angles, so that no servo moves because of the request; the motion's first tick SHALL then run in the same tick.
 
+Each motion request and each keyframe SHALL carry the origin of its caller, as servo output names origins (`link` for the drive link, `portal` for the web portal, `check` for the demonstration build), and the player SHALL keep it with the request. The enable request SHALL carry the origin of the motion or keyframe whose first tick sends it.
+
 A motion or keyframe that starts from the pending slot when the previous one ends SHALL send no enable request. The player SHALL send an enable request at no other time. Whether servo output accepts an enable request, including after a safe state, is servo output's rule.
 
-At every other tick, the player SHALL first check servo output's mode; when it is not active, the player SHALL end the current motion or keyframe without writing, discard the pending request and report itself idle. When servo output refuses the enable request or a write, the player SHALL likewise end the current motion or keyframe at once, discard the pending request and report itself idle.
+At every service call while a motion or keyframe is under way (after the tick that sent its enable request), the player SHALL first check servo output's mode, whether or not a tick is due; when it is not active, the player SHALL end the current motion or keyframe without writing, discard the pending request and report itself idle. When servo output refuses the enable request or a write, the player SHALL likewise end the current motion or keyframe at once, discard the pending request and report itself idle.
 
 #### Scenario: First command after reset
 
 - **WHEN** motion 1 is requested for the first time after a reset
 - **THEN** the player sends servo output an enable request with the zero pose at the first tick and then plays Standby from the zero pose, 41 ticks in all
+
+#### Scenario: Origin of the enable request
+
+- **WHEN** servo output is not active, the player is idle, and motion 1 is requested with origin `portal`
+- **THEN** the enable request that the player sends at the first tick carries origin `portal` and the zero pose
 
 #### Scenario: Safe state during a motion
 
