@@ -1,0 +1,29 @@
+[tools]
+python = "3.13"
+# uv: mise's pipx backend installs the Python tools through uvx.
+uv = "0.11.15"
+"pipx:platformio" = "6.2.0"
+"pipx:esptool" = "5.2.0"
+
+[env]
+# The robot's CP2102 adapter by its stable name: ttyUSB numbers change between plug-ins.
+ROBOT_PORT = "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"
+
+[tasks.backup]
+description = "Read the robot's full 4 MB flash to build/flash-<timestamp>.bin (read-only)"
+run = '''
+mkdir -p build
+out="build/flash-$(date +%Y%m%d-%H%M%S).bin"
+esptool --port "$ROBOT_PORT" --baud 460800 read-flash 0 0x400000 "$out" && sha256sum "$out"
+'''
+
+[tasks.restore]
+description = "Write the original firmware (baseline/original-flash-4MB.bin) back to the robot, after checking its hash"
+run = '''
+echo "a477d40f405df5dc50b64d7fff90c7d89173d6c750f351aa12084e1bc1f143f7  baseline/original-flash-4MB.bin" | sha256sum -c - || exit 1
+esptool --port "$ROBOT_PORT" --baud 460800 write-flash 0 baseline/original-flash-4MB.bin
+'''
+
+[tasks.monitor]
+description = "Open the robot's serial console at 115200 baud"
+run = 'pio device monitor -p "$ROBOT_PORT" -b 115200'

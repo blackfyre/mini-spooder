@@ -1,0 +1,204 @@
+/controller
+/save
+/editor
+/zero
+/setting
+/online
+Q1 mini Start!
+Spider Robot
+value
+(key, value)=(
+text/html
+servo
+(pm)=(
+(m0, m1)=(
+<html>
+<head>
+<title>Zero check</title>
+<meta charset=UTF-8>
+<meta name=viewport content=width=device-width>
+<style type=text/css>
+body {
+margin: 0px;
+backgound-color: #FFFFFF;
+font-family: helvetica, arial;
+font-size: 100%;
+color: #555555;
+text-align: center;
+span {
+font-size: 80%;
+color: #777777;
+button {
+width: 40%;
+font-size: 90%;
+background: #BFDFFF;
+padding: 5px 5px 5px 5px;
+border: none;
+</style>
+</head>
+<body>
+<table width=100% height=90%>
+<td width=50%><button type=button style=background:#FFE599 onclick=controlServo(4,45)>D16</button></td>
+<td width=50%><button type=button style=background:#FFE599 onclick=controlServo(0,135)>D14</button></td>
+<td><button type=button onclick=controlServo(5,135)>D05</button></td>
+<td><button type=button onclick=controlServo(1,45)>D12</button></td>
+<td><button type=button onclick=controlServo(6,45)>D04</button></td>
+<td><button type=button onclick=controlServo(2,135)>D13</button></td>
+<td><button type=button style=background:#FFE599 onclick=controlServo(7,135)>D02</button></td>
+<td><button type=button style=background:#FFE599 onclick=controlServo(3,45)>D15</button></td>
+<td colspan=2><button type=button style=background:#FFBFBF onclick=controlPm(100)>ZERO Postition</button></td>
+</table>
+</body>
+<script>
+function controlServo(id, value) {
+var xhttp = new XMLHttpRequest();
+xhttp.onreadystatechange = function() {
+if (xhttp.readyState == 4 && xhttp.status == 200) {
+document.getElementById("demo").innerHTML = xhttp.responseText;
+xhttp.open("GET", "controller?servo="+id+"&value="+value, true);
+xhttp.send();
+function controlPm(value) {
+xhttp.open("GET", "controller?pm="+value, true);
+</script>
+</html>
+<title>Servo calibration</title>
+font-size: 70%;
+input[type=text] {
+padding: 3px 3px 3px 3px;
+<td width=50%>D16<br/><input type=text id=servo_4 value="
+"><button type=button style=background:#FFE599 onclick=saveServo(4,'servo_4')>SET</button></td>
+<td width=50%>D14<br/><input type=text id=servo_0 value="
+"><button type=button style=background:#FFE599 onclick=saveServo(0,'servo_0')>SET</button></td>
+<td>D05<br/><input type=text id=servo_5 value="
+"><button type=button onclick=saveServo(5,'servo_5')>SET</button></td>
+<td>D12<br/><input type=text id=servo_1 value="
+"><button type=button onclick=saveServo(1,'servo_1')>SET</button></td>
+<td>D04<br/><input type=text id=servo_6 value="
+"><button type=button onclick=saveServo(6,'servo_6')>SET</button></td>
+<td>D13<br/><input type=text id=servo_2 value="
+"><button type=button onclick=saveServo(2,'servo_2')>SET</button></td>
+<td>D02<br/><input type=text id=servo_7 value="
+"><button type=button style=background:#FFE599 onclick=saveServo(7,'servo_7')>SET</button></td>
+<td>D15<br/><input type=text id=servo_3 value="
+"><button type=button style=background:#FFE599 onclick=saveServo(3,'servo_3')>SET</button></td>
+<!--<tr>
+<td colspan=2><button type=button style=background:#FFBFBF onclick=saveServo(100,0)>RESET ALL</button></td>
+</tr>-->
+function saveServo(id, textId) {
+var value = "0";
+if(id==100){
+document.getElementById("servo_7").value = "0";
+document.getElementById("servo_6").value = "0";
+document.getElementById("servo_5").value = "0";
+document.getElementById("servo_4").value = "0";
+document.getElementById("servo_3").value = "0";
+document.getElementById("servo_2").value = "0";
+document.getElementById("servo_1").value = "0";
+document.getElementById("servo_0").value = "0";
+}else{
+xhttp.open("GET","save?key="+id+"&value="+value, true);
+<title>Motion editor</title>
+input[type=range] {
+-webkit-appearance: none;
+background-color: #CCCCCC;
+width: 70%;
+height: 20px;
+input[type=range]::-webkit-slider-thumb {
+background-color: #4DA6FF;
+opacity: 0.9;
+width: 12px;
+<body onload='actionCode()'>
+<td width=50%>D16 <span>Default 110<br>
+ 135 <input type=range id=range_4 min=45 max=135 value=110 style=direction:rtl onchange=controlServo(4,'range_4')> 45 
+</span>
+<br><input type=text id=servo_4 value=110> <button type=button style=background:#FFE599 onclick=controlServo(4,'servo_4')>Send</button></td>
+<td width=50%>D14 <span>Default 70<br>
+ 135 <input type=range id=range_0 min=45 max=135 value=70 style=direction:rtl onchange=controlServo(0,'range_0')> 45 
+</span>
+<br><input type=text id=servo_0 value=70> <button type=button style=background:#FFE599 onclick=controlServo(0,'servo_0')>Send</button></td>
+<tr><td colspan=4><span><br></span></td></tr>
+<td>D05 <span>Default 90<br>
+ 135 <input type=range id=range_5 min=45 max=135 value=90 style=direction:rtl onchange=controlServo(5,'range_5')> 45 
+</span>
+<br><input type=text id=servo_5 value=90> <button type=button style=background:#BFDFFF onclick=controlServo(5,'servo_5')>Send</button></td>
+<td>D12 <span>Default 90<br>
+ 135 <input type=range id=range_1 min=45 max=135 value=90 style=direction:rtl onchange=controlServo(1,'range_1')> 45 
+</span>
+<br><input type=text id=servo_1 value=90> <button type=button style=background:#BFDFFF onclick=controlServo(1,'servo_1')>Send</button></td>
+<td>D04 <span>Default 90<br>
+ 45 <input type=range id=range_6 min=45 max=135 value=90 onchange=controlServo(6,'range_6')> 135 
+</span>
+<br><input type=text id=servo_6 value=90> <button type=button style=background:#BFDFFF onclick=controlServo(6,'servo_6')>Send</button></td>
+<td>D13 <span>Default 90<br>
+ 45 <input type=range id=range_2 min=45 max=135 value=90 onchange=controlServo(2,'range_2')> 135 
+</span>
+<br><input type=text id=servo_2 value=90> <button type=button style=background:#BFDFFF onclick=controlServo(2,'servo_2')>Send</button></td>
+<td>D02 <span>Default 70<br>
+ 45 <input type=range id=range_7 min=45 max=135 value=70 onchange=controlServo(7,'range_7')> 135 
+</span>
+<br><input type=text id=servo_7 value=70> <button type=button style=background:#FFE599 onclick=controlServo(7,'servo_7')>Send</button></td>
+<td>D15 <span>Default 110<br>
+ 45 <input type=range id=range_3 min=45 max=135 value=110 onchange=controlServo(3,'range_3')> 135 
+</span>
+<br><input type=text id=servo_3 value=110> <button type=button style=background:#FFE599 onclick=controlServo(3,'servo_3')>Send</button></td>
+<td colspan=4><br><span>Action Code:<br><output id=actionCode></output></span></font></td>
+<td colspan=2><button type=button style=background:#FFCC99 onclick=controlPm(1)>Standby</button></td>
+function controlServo(id, textId) {
+var value = document.getElementById(textId).value;
+document.querySelector('#range_' + id).value = value;
+document.querySelector('#servo_' + id).value = value;
+actionCode();
+xhttp.open("GET","controller?servo="+id+"&value="+value, true);
+function actionCode() {
+document.querySelector('#actionCode').value =
+document.getElementById('servo_0').value + ', '
++ document.getElementById('servo_1').value + ', '
++ document.getElementById('servo_2').value + ', '
++ document.getElementById('servo_3').value + ', '
++ document.getElementById('servo_4').value + ', '
++ document.getElementById('servo_5').value + ', '
++ document.getElementById('servo_6').value + ', '
++ document.getElementById('servo_7').value;
+<title>
+</title>
+width: 90%;
+height: 90%;
+<tr height=19%>
+<td width=33%><button type=button style=background:#BFFFCF onclick=controlPm(6)>Turn left</button></td>
+<td width=33%><button type=button onclick=controlPm(2)>Forward</button></td>
+<td width=33%><button type=button style=background:#BFFFCF onclick=controlPm(7)>Turn Right</button></td>
+<td><button type=button onclick=controlPm(4)>Left shift</button></td>
+<td><button type=button onclick=controlPm(3)>Backward</button></td>
+<td><button type=button onclick=controlPm(5)>Right shift</button></td>
+<tr height=5%><td colspan=3><span><br></span></td></tr>
+<tr height=20%>
+<td><button type=button style=background:#FFCC99 onclick=controlPm(1)>Standby</button></td>
+<td><button type=button style=background:#FFE599 onclick=controlPm(9)>Say Hi</button></td>
+<td><button type=button style=background:#FFE599 onclick=controlPm(11)>Push up</button></td>
+<td><button type=button style=background:#FFE599 onclick=controlPm(8)>Lie</button></td>
+<td><button type=button style=background:#FFE599 onclick=controlPm(10)>Fighting</button></td>
+<td><button type=button style=background:#FFBFBF onclick=controlPm(12)>Sleep</button></td>
+<td><button type=button style=background:#CFBFFF onclick=controlPm(13)>Dance1</button></td>
+<td><button type=button style=background:#CFBFFF onclick=controlPm(14)>Dance2</button></td>
+<td><button type=button style=background:#CFBFFF onclick=controlPm(15)>Dance3</button></td>
+<span><p align=center>
+</p></span>
+function controlPm(id) {
+xhttp.open("GET", "controller?pm="+id, true);
+function controlPms(id) {
+xhttp.open("GET", "controller?pms="+id, true);
+Hello!
+text/plain
+My Store: python.aliexpress.com
+12345678
+%s %u
+send_offer
+dhcps send ack
+dhcps send nak
+.local
+Infinity
+POSIX
+#-0+ 
+efgEFG
+] @Ht @ u @
+] @ht @,y @

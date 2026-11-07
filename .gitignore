@@ -1,0 +1,7 @@
+.pio
+build/
+# The downloaded LAFVIN vendor bundle: untrusted third-party code, kept out of git.
+references/lafvin/
+# Delivery worktrees (one per OpenSpec change) and the CodeGraph index.
+.claude/worktrees/
+.codegraph/

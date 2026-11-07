@@ -1,0 +1,53 @@
+schema: spec-driven
+
+context: |
+  Alternative firmware for an 8-DOF ESP8266 quadruped robot (a Chinese clone
+  of the LAFVIN Quadruped Spider Robot kit, stock firmware a port of Jason
+  Workshop's Q1 mini; no vendor support). ESP8266EX, 4 MB flash, servos 0-7
+  on GPIO 14, 12, 13, 15, 16, 5, 4, 2. The stock firmware's verified flash
+  dump and its observed behaviour are in baseline/ (README.md): that is the
+  reference for existing behaviour, not vendor documentation.
+  Goal: the stock firmware's existing functionality only (the motions, servo
+  control, calibration, zero check, motion editor), controlled from a
+  separate NextUI tool pak on a TrimUI Smart Pro over the robot's own WiFi
+  access point. The pak is its own application, not Spooder.pak; this repo
+  is separate from ../spooder, which serves as the reference for the
+  toolchain (mise), the WiFi drive link and the pak's structure.
+  User-facing screens (the pak, the robot's web pages) follow the Blackfyre
+  design system (bf-* tokens): https://claude.ai/artifact/JX4X2WDSVT48H94TboBR6V
+  (read project/README.md, then project/tokens.json; the pak uses its dark
+  app rules, as Spooder.pak does).
+  Toolchain: mise (mise.toml) with PlatformIO and esptool; `mise run restore`
+  writes the stock firmware back. Hardware behaviour is verified on the robot.
+  Write in British English.
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+# Example:
+#   context: |
+#     Tech stack: TypeScript, React, Node.js
+#     We use conventional commits
+#     Domain: e-commerce platform
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
