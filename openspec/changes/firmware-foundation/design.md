@@ -2,27 +2,35 @@
 
 ## Context
 
-- No firmware source exists. The repository holds the verified stock image (`baseline/original-flash-4MB.bin`), its analysis (`baseline/README.md`, `baseline/portal-strings.txt`), and a `mise.toml` with Python, uv, PlatformIO 6.2.0, esptool 5.2.0 and the tasks `backup`, `restore` and `monitor`. `ROBOT_PORT` is the CP2102's `/dev/serial/by-id/` path.
-- The stock image is an Arduino ESP8266 core build: `eboot` at 0x000000, the application from 0x001000 (about 308 KB), no filesystem, the EEPROM emulation sector at 0x3FB000 (erased) and SDK data at 0x3FC000–0x3FFFFF. The chip runs its flash in DIO mode at 40 MHz.
-- Calibration evidence in the stock image:
-  - The "Servo calibration" page (`/setting`) fills each servo's text field from the firmware, and each SET calls `/save?key=<servo>&value=<v>`.
-  - The page's RESET ALL button, `saveServo(100,0)`, sits inside an HTML comment (`<!--<tr> … RESET ALL … </tr>-->`). The stock page therefore shows no reset button, although its JavaScript handles `id==100`.
-  - The application contains the 32-bit literal 0x405FB000 at image offset 0x548C. That is the memory-mapped address of flash offset 0x3FB000 on a 4 MB layout, the value of the Arduino core's `_EEPROM_start`. This suggests that the core's EEPROM library is linked (inferred, not disassembled).
-  - The EEPROM sector is erased at the time of the dump. That shows no calibration is stored there now; it does not show whether one was ever stored there or elsewhere.
-- Servo pulses: the stock firmware's pulse mapping is not known. The Arduino core's `Servo` library maps 0–180° to 544–2400 µs by default, and the stock code most probably used it (inferred).
-- The host lacks the GCC sanitiser runtimes (`libasan`, `libubsan` are not installed), and the `espressif8266` PlatformIO platform is not yet installed; PlatformIO downloads it on first build.
+- **Repository:** no firmware source exists yet. The repository holds:
+  - the verified stock image (`baseline/original-flash-4MB.bin`);
+  - its analysis: `baseline/README.md` and `baseline/portal-strings.txt`, corrected from the disassembly in `docs/lafvin-comparison.md`, with every stock keyframe in `docs/lafvin-motions.md`;
+  - a `mise.toml` with Python, uv, PlatformIO 6.2.0, esptool 5.2.0 and the tasks `backup`, `restore` and `monitor`. `ROBOT_PORT` is the CP2102's `/dev/serial/by-id/` path.
+- **Hardware reference:** the stock firmware is the hardware reference. Hardware that stock does not use (battery sensing, sensors, extra pins) does not exist for this project. Stock defects are not hardware and are not reproduced.
+- **Stock image layout:** the stock image is an Arduino ESP8266 core build, probably close to core 2.7.4 (inferred from its Servo code). It has `eboot` at 0x000000 and the application from 0x001000 (about 308 KB). It has no filesystem. The EEPROM emulation sector is at 0x3FB000 (erased) and the SDK data at 0x3FC000–0x3FFFFF. The chip runs its flash in DIO mode at 40 MHz.
+- **Stock servo facts** (verified in `docs/lafvin-comparison.md` unless marked):
+  - **Start-up attach order:** GPIO 15, 13, 12, 14, 2, 4, 5, 16 for indices 0–7. The motion tables assume this order. The page labels (14, 12, 13, 15, 16, 5, 4, 2) and the re-attach order after `/save` (16, 5, 4, 2, 14, 12, 13, 15) are not the hardware.
+  - **Conversion:** `map(angle + trim, 1, 180, 400, 2400)` µs, then `Servo::write`. A sum of 0 or less maps below 400, and `Servo::write` then treats it as an angle and drives about 2400 µs. That is a stock defect; the safe range keeps every output at 1° or above.
+  - **Calibration:** one signed byte per index in EEPROM bytes 0–7 (`EEPROM.begin(512)`, sector 0x3FB000). An erased byte gives −1.
+  - **`/save`:** writes `value` only when `value + 124` (unsigned) is at most 248, which means −124…+124 (verified at 0x40203725–0x4020372E). `key=100` writes 0 to bytes 0–7.
+  - **Envelope of the stock motion tables:** per servo, servo 0 30–170, servos 1, 2, 5, 6 45–135, servos 3, 4 45–150, servo 7 30–135. These figures come from all 123 stock rows in `docs/lafvin-motions.md`. The zero pose (135/45) lies inside them.
+  - **Unknown:** the physical joint behind each index, its direction, and its mechanical stops.
+- **Stock timing:** stock blocks HTTP while a motion plays, and it prints `Q1 mini Start!` at 9600 baud. This firmware does not reproduce either behaviour. It keeps every service running during a motion, which is what makes stopping a motion and the link failsafe possible.
+- **Host:** the host lacks the GCC sanitiser runtimes (`libasan` and `libubsan` are not installed). The `espressif8266` PlatformIO platform is not yet installed; PlatformIO downloads it on the first build.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- One PlatformIO project that later changes extend by adding sources to `firmware/src/` and `core/`, and tests to `core/test/`, without touching the build configuration.
+- One PlatformIO project that later changes extend by adding sources to `firmware/src/` and `core/`, tests to `core/test/` and loop services to `main.cpp`, without touching the build configuration.
 - Every rule in servo-output and servo-calibration that does not need hardware is tested on the host.
-- Flash writes are deliberate: one task writes the application, one writes stock back, and nothing writes the calibration or SDK sectors by accident.
+- The firmware has a single output gate: one owner for "may the servos move", an overriding safe state, and no movement at boot.
+- Flash writes are deliberate. One task writes the application and one writes stock back. Nothing writes the calibration or SDK sectors by accident.
 
 **Non-Goals:**
-- Motions, the standby pose, the access point, the web portal and the drive link. They belong to motion-playback, drive-link and web-portal.
+- Motions, the standby pose, the access point, the web portal and the drive link. They belong to motion-playback, drive-link and web-portal. This change also does not decide when the link is lost, or which caller may enable output.
 - Any user-facing way to set calibration. The web portal provides `/setting` and `/save`.
-- Over-the-air updates, a filesystem, static analysis (clang-format, clang-tidy) and sanitised host tests. Sanitisers need runtimes that this host lacks; they can be added later without changing these specs.
+- Battery or supply monitoring: stock has no battery sensing, so none exists.
+- Over-the-air updates, a filesystem, static analysis (clang-format, clang-tidy) and sanitised host tests. Sanitisers need runtimes that this host lacks, and they can be added later without changing these specs.
 
 ## Decisions
 
@@ -31,35 +39,43 @@
 ```mermaid
 flowchart LR
   subgraph firmware["firmware/ (PlatformIO project)"]
-    ini["platformio.ini<br/>env:robot, env:native"]
-    src["src/<br/>main.cpp, servo_output.*, calibration_store.*"]
-    scripts["scripts/<br/>version.py, check_image.py, make_calibration_record.py"]
+    ini["platformio.ini<br/>env:robot, env:robot-check, env:native"]
+    src["src/<br/>main.cpp, servo_driver.*, calibration_store.*, check_console.* (check build only)"]
+    scripts["scripts/<br/>version.py, check_image.py"]
   end
   subgraph core["core/ (library, no Arduino)"]
-    lib["library.json"]
-    servo["servo/servo_bank.*"]
-    cal["calibration/calibration_record.*"]
-    tests["test/test_*/"]
+    lib["library.json<br/>srcFilter excludes test/ and fuzz/"]
+    servo["servo/servo_bank.*, servo/output_gate.*, servo/pulse.*"]
+    cal["calibration/trim_table.*"]
+    sys["system/reset_cause.*, system/loop_stats.*, check/console_parse.*"]
+    tests["test/test_*/, test/fixtures/"]
+    fuzz["fuzz/ (not compiled by either env)"]
   end
   ini -- "lib_deps = symlink://../core" --> lib
   ini -- "[platformio] test_dir = ../core/test" --> tests
   src --> servo
   src --> cal
+  src --> sys
 ```
 
-- `firmware/platformio.ini` has two environments:
-  - `robot`: platform `espressif8266` pinned to an exact version (expected 4.2.1, Arduino core 3.1.2; task 1.1 confirms the newest release at implementation time and pins it), board `esp12e`, `board_build.flash_mode = dio`, `board_build.f_flash = 40000000L`, `board_build.ldscript = eagle.flash.4m.ld` (4 MB, no filesystem), `upload_speed = 460800`.
-  - `[platformio]` sets `test_dir = ../core/test` (PlatformIO accepts `test_dir` only in that section); only the native env runs tests.
-  - `native`: platform `native` pinned, `test_framework = unity`, no framework, `test_build_src = no` so that `firmware/src/` (Arduino code) is never compiled on the host.
-- Both use `lib_deps = symlink://../core` with `lib_ldf_mode = off`. In manual mode PlatformIO builds every source of a listed library, so every `.cpp` under `core/` compiles in both envs without a source list. This replaces spooder's `build_src_filter` list and the check that keeps it complete.
-- `core/library.json` sets `-Wall -Wextra -Werror` for the library's own sources. `build_src_flags` sets the same for `firmware/src/`. Neither applies to the Arduino core or Unity.
-- The native env has no framework, so a `core/` source that includes `Arduino.h` does not compile. That enforces the hardware-free rule.
-- Alternative considered: spooder's root `platformio.ini` with `src_dir = core`. Rejected because it needs the explicit source list and a separate checker, and it would put a second PlatformIO project at the root next to `firmware/`.
+- **`firmware/platformio.ini`:**
+  - `robot`: platform `espressif8266` pinned to an exact version. The expected pin is 4.2.1 with Arduino core 3.1.2; task 1.1 confirms the newest release at implementation time and pins it. Board `esp12e`, `board_build.flash_mode = dio`, `board_build.f_flash = 40000000L`, `board_build.ldscript = eagle.flash.4m.ld` (4 MB, no filesystem), `upload_speed = 460800`.
+  - `robot-check`: `extends = env:robot`, adds `-DMINI_SPOODER_CHECK_CONSOLE=1` and `build_src_filter = +<*>`. `robot` has `build_src_filter = +<*> -<check_console.*>`, so the console is never in the normal image.
+  - `native`: platform `native` pinned, `test_framework = unity`, no framework, and `test_build_src = no`, so that `firmware/src/` (Arduino code) is never compiled on the host.
+  - `[platformio]` sets `test_dir = ../core/test`. PlatformIO accepts `test_dir` only in that section, and only the native env runs tests.
+- **Linking `core/`:** all three envs use `lib_deps = symlink://../core` with `lib_ldf_mode = off`. In manual mode PlatformIO builds every source of a listed library that passes the library's own `srcFilter`. `core/library.json` sets `"build": {"srcFilter": ["+<*>", "-<test/>", "-<fuzz/>"]}`, so every `.cpp` under `core/` except `test/` and `fuzz/` compiles in every env without a source list. This replaces spooder's `build_src_filter` list and the check that keeps it complete.
+- **Fuzz targets:** `core/fuzz/<name>/` is where executables with their own entry point live, such as drive-link's fuzz targets with `LLVMFuzzerTestOneInput` or a standalone driver with `main`. Their builds are their owner's concern. Task 1.2 verifies the exclusion with two dummy targets.
+- **Warnings:** `core/library.json` sets `-Wall -Wextra -Werror` for the library's own sources, and `build_src_flags` sets the same for `firmware/src/`. Neither applies to the Arduino core or Unity.
+- **Hardware-free rule:** the native env has no framework, so a `core/` source that includes `Arduino.h` does not compile. That enforces the rule.
+- **Alternative considered:** spooder's root `platformio.ini` with `src_dir = core`. Rejected: it needs the explicit source list and a separate checker, and it would put a second PlatformIO project at the root next to `firmware/`.
 
 ### D2. Build checks and version
 
-- `firmware/scripts/version.py` (a `pre:` extra script) adds `-DMINI_SPOODER_VERSION="<git describe --always --dirty>"`, or `"unknown"` outside a git checkout.
-- `firmware/scripts/check_image.py` runs after the build in `mise run build`. It reads the header with `esptool image-info` (flash size, mode, frequency) and the linker symbols `_EEPROM_start`, `_FS_start` and `_FS_end` with the toolchain's `nm`. It fails when the size is not 4 MB, the mode not DIO, the frequency not 40 MHz, `_EEPROM_start` is not 0x405FB000, the filesystem range is non-empty, or the image's length from 0x000000 reaches 0x3FB000. The parsing and comparison are pure functions with a Python `unittest`, which `mise run test` runs.
+- **Version:** `firmware/scripts/version.py`, a `pre:` extra script, adds `-DMINI_SPOODER_VERSION="<git describe --always --dirty>"`, or `"unknown"` outside a git checkout.
+- **Image check:** `firmware/scripts/check_image.py` runs after the build in `mise run build`.
+  - It reads the header with `esptool image-info` (flash size, mode, frequency), and the linker symbols `_EEPROM_start`, `_FS_start` and `_FS_end` with the toolchain's `nm`.
+  - It fails when the size is not 4 MB, the mode is not DIO, the frequency is not 40 MHz, `_EEPROM_start` is not 0x405FB000, the filesystem range is non-empty, the image's length from 0x000000 reaches 0x3FB000, or any symbol of the check console is present.
+  - The parsing and comparison are pure functions with a Python `unittest`, which `mise run test` runs.
 
 ### D3. mise tasks
 
@@ -69,89 +85,163 @@ flowchart LR
 | `upload` | checks that `$ROBOT_PORT` is non-empty and exists, `mise run build`, then `pio run -d firmware -e robot -t nobuild -t upload --upload-port "$ROBOT_PORT"` |
 | `test` | `pio test -d firmware -e native`, then the Python `unittest` of `firmware/scripts/` |
 
-- PlatformIO's ESP8266 upload calls `esptool write-flash 0x0 firmware.bin`, which writes only the image's length. `upload_flags` must not add `--erase-all`. The upload therefore leaves 0x3FB000–0x3FFFFF alone, which keeps calibration across uploads.
-- `upload` never omits `--upload-port`: PlatformIO would otherwise auto-detect a port, and other ESP32 and RP2040 boards are often connected.
-- `backup`, `restore` and `monitor` stay as they are.
+- **What an upload writes:** PlatformIO's ESP8266 upload calls `esptool write-flash 0x0 firmware.bin`, which writes only the image's length. `upload_flags` must not add `--erase-all`. The upload therefore leaves 0x3FB000–0x3FFFFF alone, which keeps calibration across uploads.
+- **Port:** `upload` never omits `--upload-port`. PlatformIO would otherwise auto-detect a port, and other ESP32 and RP2040 boards are often connected.
+- **No task for the check build:** it is flashed only by hand in the hardware checks (`pio run -d firmware -e robot-check -t upload --upload-port "$ROBOT_PORT"`).
+- **Existing tasks:** `backup`, `restore` and `monitor` stay as they are. `monitor` runs at 115200 baud, so the diagnostics use 115200, not stock's 9600.
 
-### D4. Servo output: a hardware-free model, a thin driver
+### D4. Main loop and budget
 
 ```mermaid
 sequenceDiagram
-  participant Main as main.cpp
-  participant Store as calibration_store
-  participant Bank as core ServoBank
-  participant Out as servo_output (Arduino Servo)
-  Main->>Main: Serial.begin(115200), print banner
-  Main->>Store: load()
-  Store-->>Main: offsets + source (stored/default)
-  Main->>Main: print calibration line
-  Main->>Bank: setOffsets(offsets)
-  Main->>Bank: setPose(boot pose)
-  loop every loop() pass
-    Main->>Out: sync(Bank)
-    Out->>Out: attach / writeMicroseconds / detach per changed servo
+  participant Core as Arduino core
+  participant Main as main.cpp loop()
+  participant Svc as services (poll)
+  Core->>Main: setup(): banner, reset cause, load trims, gate idle or fault
+  loop every pass
+    Core->>Main: loop()
+    Main->>Svc: servo_driver.poll(now)
+    Main->>Svc: later: link.poll(now), player.poll(now), web.poll(now)
+    Main->>Main: loop_stats.record(pass time, commit flag)
+    Main-->>Core: return (Wi-Fi stack runs)
   end
 ```
 
-- `core/servo/servo_bank` holds, per servo: driven or released, the commanded angle, and the offset. It applies the rules of servo-output and servo-calibration: clamping, reject a single-servo command before the first complete pose, reject an index outside 0–7, release, and the output pulse width `round(544 + 1856 × out / 180)` µs with `out = clamp(commanded + offset, 0, 180)`. It also produces the state report. Every scenario of those specs that needs no pin is a Unity test of this model.
-- `firmware/src/servo_output` owns eight Arduino `Servo` objects. Each loop pass it compares the model with what it last applied: it attaches newly driven servos with the initial width already given (`attach(pin, 544, 2400, width)`, so the first pulse already has the commanded width rather than the library default or the previous width), calls `writeMicroseconds` for changed widths, and detaches released servos and drives their pins low with `digitalWrite`. All eight are attached in the same pass when the first pose arrives.
-- Release timing: in Arduino core 3.1.2, `Servo::detach()` sends one zero-width period and waits 20 ms (`delay(REFRESH_INTERVAL)`) so that the last pulse is not cut short. Releasing all eight one after another therefore takes about 160 ms, and the later servos keep pulsing meanwhile. To keep other servos responsive, each sync pass first applies attaches and width changes for every servo and then detaches at most one released servo, so a pass blocks for at most about 20 ms; a new angle therefore reaches its servo within about 40 ms, inside the spec's 60 ms, and a release of all eight completes in about eight passes. The spec allows 200 ms for a release to complete for this reason; cutting pulses with `stopWaveform()` directly was rejected because a truncated pulse is a brief command to a different angle.
-- `writeMicroseconds` rather than `write(angle)`: the model owns the mapping and its rounding, so the host tests cover it. `Servo::write` truncates in `map()`, which differs by at most 1 µs.
-- Alternatives considered: the core's `analogWrite` at 50 Hz (resolution too coarse for servo pulses) and a custom timer ISR (duplicates the core's waveform generator, which the stock image used on the same pins).
-- Strapping pins: no source calls `Serial1` or `pinMode` with a pull on GPIO15 or GPIO2, and the build sets no `DEBUG_ESP_PORT`. Until the first pose, `servo_output` does not touch the pins.
+- **Service shape:** each service is `void poll(uint32_t nowMs)` and does only due work. Periodic work keeps `next += interval` (catching up at most one interval when late, so a stall does not cause a burst), not `next = now + interval`. Later changes add their poll calls in `main.cpp`. The order of the calls is their concern; this change fixes only the rules and the budget.
+- **Budget:** 20 ms per pass for all services together. That allows a 50 Hz servo period to be met, and it leaves the drive link's receive and failsafe check at least one look per 20 ms.
+- **Commit exception:** `EEPROM.commit()` erases and programs a flash sector and blocks for tens of milliseconds (inferred: typical sector erase time of the robot's flash chip; task 6.5 measures it). It is the one allowed exception. It happens only when a trim actually changes, so never during a motion unless someone calibrates while one plays.
+- **Statistics:** `core/system/loop_stats` is pure arithmetic (longest pass, the over-budget count that excludes commit passes, the longest commit pass) with a host test. `main.cpp` measures each pass with `micros()`.
+- **Serial:** diagnostic lines are short (under 64 bytes) and printed only on events (start-up, a mode change, a calibration change), so they fit the UART FIFO and do not block a pass.
 
-### D5. Calibration record
+### D5. Servo output: a hardware-free model, a non-blocking driver
 
-- Stored at the start of the EEPROM emulation sector through the core's `EEPROM` library (`EEPROM.begin(16)`, `EEPROM.commit()`), as the stock image's linked `_EEPROM_start` suggests stock did.
-- Record, 15 bytes, little-endian:
+```mermaid
+sequenceDiagram
+  participant Caller as caller (player, portal, link, console)
+  participant Gate as core OutputGate
+  participant Bank as core ServoBank
+  participant Drv as servo_driver (waveform API)
+  Caller->>Gate: enable(pose)
+  Gate->>Bank: setPose(pose), mode = active
+  Gate-->>Caller: token
+  Caller->>Gate: setServo(token, i, angle)
+  Gate->>Bank: accepted only if active and token current
+  Caller->>Gate: enterSafe(link-loss)
+  Gate->>Bank: releaseAll(), token = token + 1, mode = safe
+  loop every pass
+    Drv->>Bank: read wanted state
+    Drv->>Drv: start or retime waveforms, two-phase release
+  end
+```
 
-  | Offset | Size | Content |
-  |---|---|---|
-  | 0 | 4 | identifier `MSCL` |
-  | 4 | 1 | format version, 1 |
-  | 5 | 8 | offsets of servos 0–7, signed 8-bit |
-  | 13 | 2 | CRC-16/CCITT-FALSE over bytes 0–12 |
+- **`core/servo/pulse`:** holds the stock conversion `400 + ((out − 1) × 2000) / 179` and the clamp to the safe range. The range table `kSafeRange[8]` is a `constexpr` array, with the defaults from the spec. A host test checks every stock keyframe in `core/test/fixtures/stock_keyframes.h` against it. That fixture is generated once from `docs/lafvin-motions.md` by task 3.1 and committed.
+- **`core/servo/servo_bank`:** holds, per servo, driven or released, the commanded angle and the trim. It computes the wanted pulse width per servo and produces the state report.
+- **`core/servo/output_gate`:**
+  - The mode state machine of servo-output: `idle`, `active`, `safe` and `fault`.
+  - The writer token: a 32-bit counter, incremented on every entry into `safe` or `fault`. A pose or servo command is accepted only when the mode is `active` and the caller's token equals the counter.
+  - **Why a token:** a motion that was running when the safe state was entered cannot continue after another caller re-enables output, because its token is stale. The gate enforces this; it does not rely on every caller's discipline.
+  - `enterSafe` is synchronous: it releases every servo in the model in the same call. The driver turns that into pin changes within 40 ms.
+- **`firmware/src/servo_driver`:** drives the pins with the core's waveform generator (`startWaveform` and `stopWaveform` from `core_esp8266_waveform.h`), which is what the core's `Servo` class uses underneath. It does not use `Servo` objects, for two reasons:
+  - `Servo::detach()` blocks for 20 ms (`delay(REFRESH_INTERVAL)` in core 2.7.4 and 3.1.2). Eight detaches would block for 160 ms, which breaks the loop budget and delays the failsafe.
+  - The model owns the mapping and its rounding, so the host tests cover them. `Servo::write` would remap.
+- **Driver actions, each pass, per servo:**
+  - **Newly driven:** `pinMode(OUTPUT)`, `digitalWrite(LOW)`, then `startWaveform(pin, width, 20000 − width, 0)`, so the first pulse already has the commanded width.
+  - **Width changed:** `startWaveform` with the new timing. The generator applies it at the next period.
+  - **Newly released, phase 1:** `startWaveform(pin, 0, 20000, 0)` stops further high pulses after the one in progress, and the driver records the time.
+  - **Released, phase 2:** in the first pass at least 20 ms after phase 1, `stopWaveform(pin)` and `digitalWrite(pin, LOW)`.
+  - A release therefore completes within 20 ms plus one pass, at most 40 ms, and no call waits. Task 1.1 confirms in the pinned core's waveform source that a timing change and a zero high time take effect at the period boundary, without truncating the pulse in progress. If they do not, the driver waits for the end of the current pulse before changing it, using the phase it recorded.
+- **Strapping pins:** no source calls `Serial1`, or `pinMode` with a pull, on GPIO15 or GPIO2, and the build sets no `DEBUG_ESP_PORT`. Until the first enable, `servo_driver` does not touch the pins.
+- **Alternatives considered:**
+  - `analogWrite` at 50 Hz: its resolution is too coarse for servo pulses.
+  - A custom timer ISR: it would duplicate the core's waveform generator, which the stock image used on the same pins.
+  - Cutting pulses at once with `stopWaveform`: a truncated pulse is a brief command to another angle.
 
-- `core/calibration/calibration_record` encodes and decodes it. Decoding rejects a wrong identifier, version or CRC, and any offset outside −30…+30; a rejected or erased (all `0xFF`) record gives all zeros and source `default`.
-- `firmware/src/calibration_store` reads the record at start-up and writes it only when the table differs from what was loaded or last written. A power failure during `commit()` leaves an erased or half-written sector, which fails the CRC and loads as zeros. That is why the spec allows "all zeros" after an interrupted write.
-- Range ±30°: stock's limit is unknown. On the MG90-class servos one spline tooth is about 17°, so a larger correction means re-seating the horn; ±30° leaves margin and keeps a mistyped value from driving a joint into its stop.
-- `firmware/scripts/make_calibration_record.py` writes a record file for a given table. Its output and the C++ encoder's output are both checked against one committed golden record (`core/test/fixtures/calibration_record_v1.bin`), so the hardware load check (task 6.3) uses a record the firmware will accept.
+### D6. Calibration in the stock format
 
-### D6. Temporary boot pose
+- **Storage:** `firmware/src/calibration_store` uses the core's `EEPROM` library exactly as stock does: `EEPROM.begin(512)` at start-up, and `EEPROM.write(i, (uint8_t)trim)` followed by `EEPROM.commit()` on a change. `begin` reads 512 bytes and `commit` erases the sector and writes the 512 bytes back, so bytes 8–511 are kept as loaded. Bytes 512–4095 end erased, as with stock's commit.
+- **`core/calibration/trim_table`:** decodes eight bytes into trims (0xFF → −1 as two's complement; any byte is a number). It marks a trim outside −124…+124 as invalid. Set (with the result accepted, rejected or unchanged), reset all, and a "write needed" result follow the spec. It reports whether every trim is valid, which the gate uses for `fault`.
+- **Why the stock format, not a record with an identifier and checksum** (that was the previous draft's choice): with a checksum record, stock trims would be lost on the first upload, and the record would overwrite bytes 0–7 with header data that stock would then read as trims. Keeping the format means that trims move with the robot in both directions.
+- **What the format cannot do:** it cannot detect an interrupted write, which can leave any byte value. The design accepts this:
+  - writes are rare (a change only);
+  - out-of-range bytes cause a fault;
+  - in-range nonsense is still limited by the safe range.
+  The robot then moves to a wrong but bounded pose, which the user sees and recalibrates.
+- **Range:** −124…+124 is stock's accepted range, so the web portal can forward stock requests unchanged. Mechanical protection comes from the per-servo safe range after the trim, not from a narrow trim range.
+- **Fixtures:** `core/test/fixtures/trims_example.bin` (FD 00 00 00 F9 00 00 0C, the trims −3, 0, 0, 0, −7, 0, 0, +12) and `trims_fault.bin` (00 00 80 00 00 00 00 00), each 8 bytes. The hardware checks write them with esptool. When esptool writes at 0x3FB000, it erases the whole sector first, so the remaining bytes read 0xFF (−1 for bytes 0–7, which these fixtures cover).
 
-Until motion-playback exists, `main.cpp` gives the complete pose 70, 90, 90, 110, 110, 90, 90, 70 (the stock pages' default angles) once after loading calibration. motion-playback replaces this with its standby motion. This is scaffolding for the hardware checks, not a feature.
+### D7. Check build and console
 
-### D7. Hardware check of the calibration write path
+- **Commands** (`check_console`, `robot-check` only), one per line, ASCII:
+  - `enable a0 … a7`, `pose a0 … a7`, `servo i a`;
+  - `release i`, `release all`;
+  - `safe`;
+  - `trim i v`, `trimreset`;
+  - `status`;
+  - `restart`, `hang`.
+- **Parser:** `core/check/console_parse` is pure parsing into a command value, with a host test for every command and for malformed input. The console keeps the token it gets from `enable` and passes it on, as any caller would.
+- **`hang`:** busy-waits without yielding, so the software watchdog resets the chip. This tests the reset-cause line.
+- **Why a console, not compile-time scenarios** (the previous draft's `robot-calcheck`): the joint and direction check needs servos driven one at a time on demand, and the gate checks need commands in a chosen order. A console does both without moving anything at boot.
 
-This change has no user-facing way to set an offset, so the write path (set, reset, `EEPROM.commit()`) needs a check build to be verified on the robot.
+### D8. Hardware check order
 
-- A third environment, `robot-calcheck`, extends `robot` with `-DMINI_SPOODER_CALCHECK=1` (values `1`, `2` or `3`). Each value acts 2 s after the boot pose is driven, so the effect on driven servos is visible. With `1`, `main.cpp` sets the offsets −3, 0, 0, 0, −7, 0, 0, +12 through the normal set operation, one servo at a time; with `2`, it calls the normal reset-all operation; with `3`, it releases all servos and, 3 s later, commands servo 5 to 100°. With `1` and `2` it then prints the calibration line again. Otherwise it behaves as the normal firmware.
-- It is flashed only by the hardware check (task 6.4), with `pio run -d firmware -e robot-calcheck -t upload --upload-port "$ROBOT_PORT"`, and is never the image that `mise run upload` writes.
-- The check reads the sector back with esptool and compares it with the golden record, then boots the normal build to confirm the stored table loads; this covers the write format, the commit and the load in one pass.
+```mermaid
+flowchart TD
+  A["6.1 normal build: diagnostics,<br/>boot still with servos connected"] --> B["6.2 check build, robot on a stand:<br/>gate, safe state, release timing"]
+  B --> C["6.3 per-servo joint and direction,<br/>legs off the ground"]
+  C --> D["6.4 mechanical stops,<br/>safe ranges set and re-tested"]
+  D --> E["6.5 calibration: write path,<br/>stock format, fault mode"]
+  E --> F["6.6 return to stock"]
+```
+
+- **No movement before the gate is checked:** the boot-still and gate checks (6.1, 6.2) come before any check that moves a joint over its range. Every check that drives a servo runs with the robot on a stand, legs off the ground.
+- **Joint map:** 6.3 records each index's joint and the direction of increasing angle in `docs/servo-joints.md`, before any later change runs a motion.
 
 ## Cross-change assumptions
 
-- **motion-playback** gives the first complete pose at start-up (its standby pose) and replaces D6's temporary pose. It drives servos only through servo-output and reads offsets only through it, so offsets apply to every motion.
-- **web-portal** parses `/save?key=<i>&value=<v>` into a servo index and a whole number of degrees, maps `key=100` to the reset-all operation, fills `/setting` from the offset table, and sends direct servo control and the zero check through servo-output. Its handling of non-integer or out-of-range text is its own decision; servo-calibration only accepts −30…+30.
-- **drive-link** takes the telemetry's joint angles from the servo state report (commanded angles, without offsets), and chooses its link-loss safe state from what servo-output offers (a pose or release). Its access point setup may write the SDK data sector; `mise run restore` returns it to stock.
-- Every later change adds its hardware-free code to `core/` with tests in `core/test/`, and its hardware code to `firmware/src/`, without editing the `lib_deps`, `lib_ldf_mode` or warning settings of `firmware/platformio.ini`.
+- **motion-playback:**
+  - It never moves the robot at boot. Its first output after `idle` or `safe` is `enable(complete pose)`, made in direct response to a new motion request, and it uses the returned token for every later pose or servo command.
+  - It stops the running motion when a command is rejected or the reported mode is not `active`.
+  - It never calls `enable` from a motion that is already running.
+  - Its keyframe stepping is a poll service within the loop budget.
+  - It takes keyframe data in commanded angles; the trims and the safe ranges are applied here.
+  - Its motion checks run after task 6.3 and with the legs off the ground.
+- **drive-link:**
+  - It calls `enterSafe(link-loss)` when command frames stop; an undecodable frame does not count as a fresh frame.
+  - It reads the mode, the safe reason and the commanded angles (without trims) from the state report for its telemetry.
+  - Its receive and failsafe check is a poll service, and it reads a UDP packet only when it is complete.
+  - Its timing can count on the 20 ms pass budget, except for a pass that commits calibration. Task 6.5 records how long that pass takes.
+  - It puts fuzz targets and their driver under `core/fuzz/<name>/`, which neither env compiles, and builds them itself.
+  - It decides which of its frames may call `enable`. It runs its link-loss tests with servos attached and output gated before motion-playback's motion checks.
+  - Its access point setup may write the SDK data sector; `mise run restore` returns it to stock.
+- **web-portal:**
+  - It maps `/save?key=<i>&value=<v>` with `i` in 0–7 to "set trim" with the range −124…+124, and `key=100` to "reset all trims".
+  - It fills `/setting` from the trim table, including −1 for an erased byte.
+  - It sends direct servo control, the zero check and `/online` keyframes through the output gate. When the mode is not `active`, it decides which complete pose to enable with, or to refuse.
+  - It relies on the safe-range clamp and does not add its own.
+  - It keeps serving `/setting` and `/save` in `fault`, so that a damaged trim can be repaired.
+  - It labels channels with the GPIO map 15, 13, 12, 14, 2, 4, 5, 16.
+- **handheld-pak:** any GPIO label it shows uses the same map.
+- **Every later change** adds its hardware-free code to `core/` (executables under `core/fuzz/`), its tests to `core/test/`, and its hardware code and poll call to `firmware/src/`, without editing the `lib_deps`, `lib_ldf_mode`, `srcFilter` or warning settings.
 
 ## Risks / Trade-offs
 
-- [GPIO16 servo support in the pinned core's waveform generator is not verified] → task 6.2 checks every pin on the robot; if GPIO16 has no pulses, pin the core release that the hardware check passes with and record it.
-- [A sector erase and write in `EEPROM.commit()` takes tens of milliseconds and may stretch servo pulses] → writes happen only when an offset changes, during calibration, never during motions.
-- [The servos on GPIO15 and GPIO2 can twitch at power-up, before any firmware runs] → no firmware fix exists; the spec only guarantees that the firmware adds no output before the first pose and that the robot boots reliably.
-- [The stock pulse mapping may differ from 544–2400 µs, which would shift every motion against the stock robot] → recorded as an open question; motion-playback's hardware checks compare poses with the stock firmware.
-- [The flash layout check depends on the core's linker symbol names] → the check fails loudly when a symbol is missing, rather than passing.
+- **GPIO16 support:** support for GPIO16 in the pinned core's waveform generator is not verified. Task 6.2 checks every pin on the robot. If GPIO16 has no pulses, pin the core release that the hardware check passes with, and record it.
+- **Waveform semantics:** the waveform generator's timing-change semantics differ between core releases (inferred). Task 1.1 reads the pinned source, and D5 names the fallback.
+- **Commit timing:** a sector erase and write in `EEPROM.commit()` blocks the loop. It may also stretch servo pulses if the waveform interrupt is held off while the flash cache is disabled (unverified; stock detached its servos around a save). Task 6.5 measures the pass time and, if a logic analyser is available, the pulses during a commit. If pulses are disturbed, the commit is deferred to a pass in which no servo is driven, and the spec's "stored before the result is returned" is revisited.
+- **Strapping-pin twitch:** the servos on GPIO15 and GPIO2 can twitch at power-up, before any firmware runs. No firmware fix exists. The spec only guarantees that the firmware adds no output before the first enable and that the robot boots reliably.
+- **Interrupted calibration write:** a power failure during a commit can leave in-range wrong trims, which load without a fault (D6). Bounded by the safe ranges.
+- **Default safe ranges:** the defaults are not mechanical measurements. Until task 6.4, a joint whose stop lies inside its default range can still be driven into the stop. Task 6.4 comes before any motion check for this reason.
+- **Flash layout check:** it depends on the core's linker symbol names. The check fails loudly when a symbol is missing, rather than passing.
 
 ## Migration Plan
 
 1. With the user's go-ahead: `mise run backup` (read-only, resets the board) to keep the robot's current state.
-2. With the user's go-ahead: `mise run upload` to flash the first build. The calibration and SDK sectors stay as they were.
+2. With the user's go-ahead: `mise run upload` to flash the first build. The calibration and SDK sectors stay as they were, and stock trims (if any) are used.
 3. Rollback at any time, with the user's go-ahead: `mise run restore` writes the hash-checked stock image, including the erased EEPROM sector and the stock SDK data.
 
 ## Open Questions
 
-- Did the stock firmware persist calibration, and where? The page and the `/save` route exist, the EEPROM library appears to be linked (the 0x405FB000 literal), and the sector is erased; the user recalls the original firmware had no calibration. Unverified until the application is disassembled or the LAFVIN source (`docs/lafvin-*.md`) is compared. The answer does not change these specs: this firmware uses its own record format and treats any other sector content as no calibration.
-- What unit and range did stock use for the calibration value (degrees as an offset, or an absolute angle), and what did it do with out-of-range text? Inferred as a degree offset defaulting to 0, from RESET ALL writing `0` into every field.
-- What pulse mapping did stock use? Inferred as the `Servo` library default, 544–2400 µs.
+- **Resolved:** did the stock firmware persist calibration, and where? Yes. The disassembly shows one signed byte per servo in EEPROM bytes 0–7 of the 512-byte buffer at 0x3FB000, written by `/save` and read on every servo write. The dumped sector is erased, so this robot has no saved calibration. That fits the user's recollection that the original had no calibration in practice.
+- Which joint each servo index drives, in which direction, and where its mechanical stops are. Unknown until task 6.3 and task 6.4.
+- How long `EEPROM.commit()` blocks on this chip, and whether servo pulses stay intact during it. Measured in task 6.5.
+- Whether the pinned core's waveform generator applies a timing change at the period boundary. Checked in task 1.1.
