@@ -77,7 +77,7 @@ The page sources live in `firmware/portal/pages/` (one HTML file per page, plus 
 
 ### 3. Pages streamed from flash; `/setting` filled in at serve time
 
-Static pages are sent with `send_P` from `PROGMEM`. The `/setting` page source has eight placeholders (`{{OFF0}}`…`{{OFF7}}`). The handler sends the page in chunks, replacing each placeholder with the trim that servo-calibration reports. No page is assembled in RAM.
+Static pages are sent from `PROGMEM` by the portal's sender (decision 10). The `/setting` page source has eight placeholders (`{{OFF0}}`…`{{OFF7}}`). The handler hands the sender the page as a list of flash parts with each placeholder replaced by the trim that servo-calibration reports, formatted into a few bytes of RAM. No page is assembled in RAM.
 
 - *Alternative:* a static `/setting` page that fetches the trims with a script. This was rejected: it would need a new JSON route that stock does not have.
 
@@ -174,6 +174,18 @@ The changes from stock are limited to presentation and stock defects:
 - Fonts use the token families' fallbacks (`'Archivo', 'Helvetica Neue', Helvetica, sans-serif` and `'JetBrains Mono', ui-monospace, monospace`). No font files are sent, as in spooder's portal.
 - Text is English only. The design system's three-language rule is for the site, and the stock pages are English.
 
+### 10. Responses written across loop passes by a portal-owned sender
+
+On the robot, the library's `send_P`/`sendContent_P` held a loop pass until every byte fitted into the send buffer: ordinary page loads gave passes of 63–72 ms, and a client that closed mid-page gave one pass of 9 s (every chunk waited for its write timeout). Meanwhile nothing else ran: no motion tick, no drive-link receive or failsafe, no servo output.
+
+`ESP8266WebServer` now only parses and dispatches. A route handler, or the method hook for non-GET requests (which returns `CLIENT_IS_GIVEN`), hands the connection and the response to a sender in `core/portal/transfer` (hardware-free, Unity-tested against a fake connection). The sender builds the status line (`HTTP/1.<request's minor>`), `Content-Type`, `Content-Length` (the sum of the body's parts) and `Connection: close`, copies the RAM parts (headers, trims, short bodies, the echoed path) and keeps pointers to the flash parts. Each loop pass it writes at most the free send buffer (`availableForWrite()`), in writes of at most 512 bytes through a stack copy of the flash bytes, with the client's write timeout at 0, and stops the pass at the first short write. When everything is written it waits, across passes, until the send buffer is empty (all acknowledged), then closes. It closes at once when the client is gone, and after 2 s without progress (no bytes taken and no send-buffer room freed by acknowledgements). Closing drops the portal's last reference to the connection, which closes it through lwIP without `stop()`'s flush wait.
+
+While a transfer is in progress the portal does not call the library, so new connections wait in the listening socket's queue. The library's keep-alive is no longer used: every response closes its connection.
+
+- *Why:* the loop's budget and drive-link's failsafe timing need every pass short, whatever a client does; a sender in `core/` lets the partial-write, disconnect, stall and byte-exact cases be tested on the host.
+- *Cost:* a page load holds the portal for one connection at a time, so a second client waits up to the stall time behind a client that stops reading; the pages are self-contained, so a page load is one connection.
+- *Alternative:* the library's own send calls with a short write timeout. Rejected: each chunk still waits for its timeout, and a dead client multiplies it.
+
 ### Cross-change assumptions
 
 These are facts that other changes own. This change relies on them and does not specify them.
@@ -191,7 +203,8 @@ These are facts that other changes own. This change relies on them and does not 
 - [`/online` replies before the move ends, unlike stock] → No stock page uses it. A client that paced by the replies gets keyframes handled by motion-playback's request rule instead.
 - [The phone cannot move the robot while the pak is connected] → Intended (the lock). The status line says that the remote is driving and that the lock ends with its session.
 - [After link loss the robot is limp until someone makes a request] → Intended: firmware-foundation's rule. With no session live, any portal motion button or servo control brings output back.
-- [The heap is fragmented by chunked `/setting` responses] → Only eight short integers are formatted per request, into a stack buffer.
+- [The heap is fragmented by chunked `/setting` responses] → Only eight short integers are formatted per request; the sender copies them with the headers into one small allocation, freed when the transfer ends.
+- [A client that stops reading holds the portal] → The sender closes it 2 s after its last progress; other connections wait in the queue meanwhile, and no loop pass waits.
 - [The vendored tokens drift from the design system] → `SOURCE.md` records the version and hash. Updating them is a deliberate copy followed by `mise run portal-check`.
 - [The page labels drift from the pin map] → `portal-check` compares `servo_labels.json` with servo-output's table.
 - [The Controller row grouping is inferred from string order] → Low impact. The hardware check compares it with a photo or memory of the stock page, if one is available.
