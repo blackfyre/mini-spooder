@@ -7,10 +7,10 @@ The robot's stock remote is a web page on a phone: one tap per motion, no feedba
 ## What Changes
 
 - A new Go module in `handheld/` (gabagool and SDL2), modelled on Spooder.pak (`../spooder/desktop/handheld`) but independent of it: code and ideas are copied, nothing is imported from or edits `../spooder`.
-- The pak joins the robot's access point (as `drive-link` defines it), checks its address, and sends the complete desired state in command frames at the drive link's fixed period from one UDP socket.
-- A control mapping from the TrimUI's buttons to every stock motion (`motion-playback` ids 1–15 and 100) and to the drive link's stop request; one request per press, as the stock portal sends one request per click.
-- One drive screen in the Blackfyre design system's dark app style: the motion the robot reports, its joint angles, what the pak requested, the active control layer, and the link's quality.
-- Leaving safely: Menu and the Power button first request stop and wait for the robot to report standby (bounded), then exit, suspend or power off; WiFi power saving is turned off for the run and restored however the pak ends.
+- The pak joins the robot's access point (as `drive-link` defines it), checks its address, and after the drive link's 350 ms start silence sends the complete desired state in command frames at its 50 ms period from one UDP socket.
+- A control mapping from the TrimUI's buttons to every motion of the stock controller page (`motion-playback` ids 1–15 and 100; Centre, 99, has no stock button and stays on the web portal) and to the drive link's stop request (motion 0); one request per press, as the stock portal sends one request per click.
+- One drive screen in the Blackfyre design system's dark app style: the motion the robot reports, its joint angles, what the pak requested and whether the robot took it (from the drive link's telemetry echo), the active control layer, and the link's quality.
+- Leaving safely: Menu and the Power button first request stop and wait for the robot to confirm it and report no motion playing (bounded), then exit, suspend or power off; WiFi power saving is turned off for the run and restored however the pak ends.
 - Packaging: an arm64 device build under rootless Podman (glibc no newer than the device's), a zip of `MiniSpooder.pak` for `Tools/tg5040/`, and a desktop (amd64) build.
 - A fake robot (Go, loopback UDP) that speaks the drive link, for host and end-to-end tests and for running the desktop build without hardware.
 - `mise.toml` tasks for the pak's fork, dependency check, test, desktop build, device build, package, fake robot and end-to-end tests, and a Go version pin.
@@ -29,7 +29,7 @@ None.
 ## Impact
 
 - **New code:** `handheld/` (Go module: `cmd/`, `internal/`, `pak/launch.sh`, `scripts/`, `build/Containerfile`, `third_party/` for the gabagool patch, embedded fonts with their OFL licences, a token snapshot of the Blackfyre design system).
-- **Tests:** a host test in the PlatformIO native env that writes golden drive-link frames from `core/`'s codec, so the pak's Go codec is checked against it.
+- **Tests:** the pak's Go codec is checked against `drive-link`'s golden frames file, written from `core/`'s codec; this change adds no firmware test.
 - **Tooling:** `mise.toml` gains Go and the `handheld-*` tasks; the device build needs rootless Podman with qemu-user-static for arm64; the desktop build needs the host's SDL2 development packages.
 - **Dependencies:** `github.com/BrandonKowalski/gabagool/v2` (pinned, patched locally), `github.com/veandco/go-sdl2`.
 - **Depends on:** `drive-link` (access point, framing, command and telemetry frames, link loss) and, through it, `motion-playback` (motion ids and names). Neither is changed by this change.
