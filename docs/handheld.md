@@ -18,13 +18,25 @@ When NextUI sets a log directory, the log goes to `MiniSpooder.txt` in it.
 
 ## Join the robot's network
 
-The pak does not join WiFi networks itself.
+The pak joins the robot's network itself. It needs the network saved on the TrimUI once.
+
+Once, to save the network:
 
 1. Switch the robot on.
 2. In NextUI's WiFi settings, join the network `mini-spooder` with the password `87654321`.
-3. Start MiniSpooder from Tools.
 
-At start the pak checks that `wlan0` has an address in 192.168.4.0/24. If it has none, the pak renews the lease once. If there is still none, it names the robot's network, its password and the network `wlan0` is on. Press A to check again, or Menu to quit.
+NextUI may not keep the connection and may move back to another saved network. That is expected: the network is now saved.
+
+Each time:
+
+1. Switch the robot on.
+2. Start MiniSpooder from Tools.
+
+At start the pak checks that `wlan0` has an address in 192.168.4.0/24. If it has none, the pak selects the saved network `mini-spooder`, which disables the other saved networks for the run. It then waits up to 10 s for the connection, requests an address with `udhcpc` and checks that the address is in 192.168.4.0/24. A progress screen shows the join. Press Menu on it to stop the join and quit.
+
+If the network is not saved, the pak names the network, its password and the network `wlan0` is on. If a step of the join fails, the pak enables the other networks again and names the step. In both cases, press A to try again, or Menu to quit.
+
+However the pak ends, it enables every saved network again and reconnects, so the TrimUI returns to its usual network. The pak never saves the WiFi configuration.
 
 While it runs, the pak turns WiFi power saving off. It restores the setting however it ends.
 

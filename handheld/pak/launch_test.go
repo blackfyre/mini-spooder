@@ -21,8 +21,30 @@ case "$*" in
 esac
 `
 
+// stubWPA is wpa_cli on PATH: it keeps whether the other saved networks
+// are disabled in $WPA_STATE ("enabled" or "disabled") and logs every
+// enable_network and reassociate to $WPA_LOG.
+const stubWPA = `#!/bin/sh
+[ "$1 $2 $3 $4" = "-p /etc/wifi/sockets -i wlan0" ] || exit 1
+shift 4
+case "$*" in
+list_networks)
+  printf 'network id / ssid / bssid / flags\n'
+  if [ "$(cat "$WPA_STATE")" = disabled ]; then
+    printf '0\tmeki-net\tany\t[DISABLED]\n6\tmini-spooder\tany\t[CURRENT]\n'
+  else
+    printf '0\tmeki-net\tany\t[CURRENT]\n6\tmini-spooder\tany\t\n'
+  fi ;;
+"select_network "*) echo disabled > "$WPA_STATE"; echo OK ;;
+"enable_network all") echo enabled > "$WPA_STATE"; echo enable >> "$WPA_LOG"; echo OK ;;
+reassociate) echo reassociate >> "$WPA_LOG"; echo OK ;;
+*) exit 1 ;;
+esac
+`
+
 // pakDir makes a pak with launch.sh and a stub binary, and a bin directory
-// with the stub iw, power saving on.
+// with the stub iw, power saving on, and the stub wpa_cli, every network
+// enabled.
 func pakDir(t *testing.T, binary string) (dir string, env []string) {
 	t.Helper()
 	dir = t.TempDir()
@@ -45,6 +67,8 @@ func pakDir(t *testing.T, binary string) (dir string, env []string) {
 	write(filepath.Join(pak, "launch.sh"), string(script))
 	write(filepath.Join(pak, "minispooder"), binary)
 	write(filepath.Join(bin, "iw"), stubIW)
+	write(filepath.Join(bin, "wpa_cli"), stubWPA)
+	write(filepath.Join(dir, "wpa"), "enabled\n")
 	realSleep, err := exec.LookPath("sleep")
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +79,8 @@ func pakDir(t *testing.T, binary string) (dir string, env []string) {
 		"PATH="+bin+":"+os.Getenv("PATH"),
 		"IW_STATE="+filepath.Join(dir, "state"),
 		"IW_LOG="+filepath.Join(dir, "iw.log"),
+		"WPA_STATE="+filepath.Join(dir, "wpa"),
+		"WPA_LOG="+filepath.Join(dir, "wpa.log"),
 		"MARK="+filepath.Join(dir, "running"),
 		"ARGS="+filepath.Join(dir, "args"),
 		"GRAND="+filepath.Join(dir, "grandchild"),
@@ -439,5 +465,59 @@ echo "$LD_LIBRARY_PATH" > "$ARGS"
 	want := "/usr/trimui/lib:/usr/lib:" + filepath.Join(dir, "MiniSpooder.pak", "lib")
 	if got := read(t, filepath.Join(dir, "args")); got != want {
 		t.Errorf("LD_LIBRARY_PATH %q, want %q", got, want)
+	}
+}
+
+// The binary selects the robot's network (disabling the others) and then
+// crashes or is killed before giving them back: launch.sh gives them back.
+func TestLaunchGivesNetworksBack(t *testing.T) {
+	for name, binary := range map[string]string{
+		"crash": `#!/bin/sh
+wpa_cli -p /etc/wifi/sockets -i wlan0 select_network 6 >/dev/null
+kill -SEGV $$
+`,
+		"SIGTERM": `#!/bin/sh
+wpa_cli -p /etc/wifi/sockets -i wlan0 select_network 6 >/dev/null
+echo $$ > "$MARK"
+exec sleep 30
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, env := pakDir(t, binary)
+			cmd := launch(dir)
+			cmd.Env = env
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			if name == "SIGTERM" {
+				waitFor(t, filepath.Join(dir, "running"))
+				if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_ = cmd.Wait()
+			if got := read(t, filepath.Join(dir, "wpa")); got != "enabled" {
+				t.Errorf("networks %q after the binary ended, want enabled", got)
+			}
+			if got := read(t, filepath.Join(dir, "wpa.log")); got != "enable\nreassociate" {
+				t.Errorf("wpa_cli ran %q, want enable_network all then reassociate", got)
+			}
+		})
+	}
+}
+
+// A run that left every network enabled (the binary gave them back, or
+// never joined) is not reassociated again.
+func TestLaunchLeavesEnabledNetworksAlone(t *testing.T) {
+	dir, env := pakDir(t, `#!/bin/sh
+exit 0
+`)
+	cmd := launch(dir)
+	cmd.Env = env
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("launch.sh: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "wpa.log")); err == nil {
+		t.Errorf("wpa_cli ran %q with every network enabled, want nothing", read(t, filepath.Join(dir, "wpa.log")))
 	}
 }

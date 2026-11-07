@@ -29,19 +29,31 @@ The same program SHALL also build for desktop Linux (amd64). Started without the
 - **THEN** it runs no WiFi command and no address check, and plays motions on the fake robot as it would on the robot
 
 ### Requirement: Joining the robot's network
-With the device flag, before it sends any command frame, the pak SHALL check that `wlan0` holds an IPv4 address in the robot's subnet as `drive-link` defines it. If it does not, it SHALL renew the lease once and check again. If there is still none, it SHALL show a message naming the robot's network and its password (as `drive-link` defines them) to be joined in NextUI's WiFi settings, naming the network `wlan0` is on if any, with the choices to retry the check or quit, and SHALL send no command frame until the check passes. The pak SHALL NOT join or change WiFi networks itself.
+With the device flag, before it sends any command frame, the pak SHALL bring `wlan0` onto the robot's network as `drive-link` defines it. When `wlan0` already holds an IPv4 address in the robot's subnet, the pak SHALL change no WiFi setting. Otherwise it SHALL find the network saved on the device under the robot's network name; when there is none, it SHALL show a message naming the robot's network and its password (as `drive-link` defines them) to be joined once in NextUI's WiFi settings so that it is saved, naming the network `wlan0` is on if any. When the network is saved, the pak SHALL select it, which disables every other saved network, wait at most 10 s for the association with it to complete, request a lease with `udhcpc` (bounded), and check that `wlan0` then holds an address in the robot's subnet. When any of these steps fails, it SHALL enable every saved network again and reassociate, and show a message naming the robot's network and the step that failed. Every message SHALL offer the choices to retry or quit, and the pak SHALL send no command frame until the join has passed. While the run goes on, the other saved networks SHALL stay disabled. However the pak ends after selecting the network (Menu, Power, an error, a signal or a crash of the binary), it SHALL enable every saved network again and reassociate, so that the device returns to its usual networks. The pak SHALL NOT save the WiFi supplicant's configuration. It SHALL show its progress while it joins.
 
 #### Scenario: Already joined
 - **WHEN** `wlan0` holds an address in the robot's subnet at start
-- **THEN** the pak starts its link without renewing the lease
+- **THEN** the pak starts its link without selecting a network or requesting a lease
 
-#### Scenario: Stale lease
-- **WHEN** `wlan0` holds an address outside the robot's subnet and one renewal gives an address inside it
-- **THEN** the pak renews exactly once and then starts its link
+#### Scenario: Joined by the pak
+- **WHEN** `wlan0` is on another network, the robot's network is saved, the association completes and the lease gives an address in the robot's subnet
+- **THEN** the pak selects the robot's network, requests one lease, starts its link, and keeps the other saved networks disabled until it exits
 
-#### Scenario: Not joined
-- **WHEN** `wlan0` has no address in the robot's subnet after the renewal
-- **THEN** the pak shows the robot's network name and password and the current network, sends no datagram, and checks again (renewing once more) only when the user chooses retry
+#### Scenario: Robot's network not saved
+- **WHEN** no network is saved under the robot's network name
+- **THEN** the pak shows the robot's network name and password and the current network, changes no WiFi setting, sends no datagram, and tries again only when the user chooses retry
+
+#### Scenario: Join fails
+- **WHEN** the association does not complete within 10 s, the lease request fails, or the address it gives is outside the robot's subnet
+- **THEN** the pak enables every saved network again, reassociates, shows the robot's network and the failed step, sends no datagram, and joins again only when the user chooses retry
+
+#### Scenario: Quit while joining
+- **WHEN** the user presses Menu while the pak is joining
+- **THEN** the join ends, every saved network is enabled again and the device reassociates, and the pak exits without having sent any datagram
+
+#### Scenario: Networks given back on exit
+- **WHEN** the pak has selected the robot's network and then exits by Menu, by a signal, or because the binary crashed
+- **THEN** every saved network is enabled again and the device reassociates, and the supplicant's configuration was not saved
 
 ### Requirement: Command datagrams
 When its link starts, and again when it resumes from suspend, the pak SHALL send nothing to the robot for at least 350 ms, the silence `drive-link` requires of a remote before its first frame. After that it SHALL send one command frame per UDP datagram to the robot's address and port, at `drive-link`'s 50 ms command period, every frame being `drive-link`'s command frame carrying the pak's complete desired state: its requested motion (0 for stop) and `drive-link`'s single motion-request counter, with the frame sequence number advancing by one per frame. It SHALL send every datagram of a run, including those after a suspend and resume, from one socket bound once, so from one source port. Its frames of a run SHALL carry motion 0 and counter 0 until its first request is made, and it SHALL make a request only for a control press made during the run, for a repetition of a held walking control (see Hold to repeat), or for the leave's Standby (see Leaving safely). Once a leave has finished waiting, it SHALL send no further frame until a suspend returns. A failed send SHALL be counted and SHALL NOT stop the next period's send.
@@ -257,7 +269,7 @@ The pak SHALL show the WiFi link's quality: the signal level of `wlan0` in dBm (
 - **THEN** the screen shows the signal as unknown, not as a number
 
 ### Requirement: Leaving safely
-Before its link has started (while the address check or the join message is shown), Menu or the message's quit SHALL exit, and Power SHALL suspend or power off, with no frame sent. Once the link has started, when Menu is pressed, or Power is pressed briefly or held 2 s, the pak SHALL request Standby (motion 1, advancing the motion-request counter once) whether or not the link is live. The rules of Control mapping on one new request per frame and on no motion request after an unconfirmed stop SHALL delay this request but never drop it: it replaces an unsent motion request, and after an unconfirmed stop it is made once the stop is echoed or marked not confirmed. The pak SHALL keep sending command frames and wait until telemetry shows that Standby has finished, for at most 3 s from the press. Standby has finished when a telemetry frame echoing the counter value of the leave's newest Standby request reports motion 1 neither playing nor pending, after an earlier frame echoing that value reported it playing or pending; a late frame SHALL NOT count, and an echo with the result none yet or rejected SHALL NOT end the wait. Without such a frame, the pak SHALL wait the full 3 s. It SHALL show that it is bringing the robot to Standby, and that B stops, while it waits. While it waits, B SHALL stay live: a B press SHALL be taken as a stop under the rules of Control mapping (taken while the link is live, otherwise shown as not sent), and the leave SHALL continue: from the moment that stop is taken, no telemetry frame SHALL end the wait as Standby finished until Standby has been requested again; once that stop is echoed or marked not confirmed, the pak SHALL request Standby again (advancing the counter by one) and wait for that request to finish, within the same 3 s from the press that started the leave, which a B press SHALL NOT extend. No other control SHALL change what the pak requests while it waits, and a second Menu or Power press SHALL NOT start another leave. When the wait ends, it SHALL stop sending command frames, and only then exit (Menu), run NextUI's suspend (a short Power press) or power off (Power held). Standby SHALL be the pak's only safety action on leaving: what the robot does once the pak's frames stop is `drive-link`'s link-loss rule. After a suspend returns, the pak SHALL be driving again, with the link's sequence counting rebaselined, and SHALL take no press until the link is live again.
+Before its link has started (while the join runs or the join message is shown), Menu or the message's quit SHALL exit, ending a join that is still running and giving the saved networks back first, and Power SHALL suspend or power off, with no frame sent. Once the link has started, when Menu is pressed, or Power is pressed briefly or held 2 s, the pak SHALL request Standby (motion 1, advancing the motion-request counter once) whether or not the link is live. The rules of Control mapping on one new request per frame and on no motion request after an unconfirmed stop SHALL delay this request but never drop it: it replaces an unsent motion request, and after an unconfirmed stop it is made once the stop is echoed or marked not confirmed. The pak SHALL keep sending command frames and wait until telemetry shows that Standby has finished, for at most 3 s from the press. Standby has finished when a telemetry frame echoing the counter value of the leave's newest Standby request reports motion 1 neither playing nor pending, after an earlier frame echoing that value reported it playing or pending; a late frame SHALL NOT count, and an echo with the result none yet or rejected SHALL NOT end the wait. Without such a frame, the pak SHALL wait the full 3 s. It SHALL show that it is bringing the robot to Standby, and that B stops, while it waits. While it waits, B SHALL stay live: a B press SHALL be taken as a stop under the rules of Control mapping (taken while the link is live, otherwise shown as not sent), and the leave SHALL continue: from the moment that stop is taken, no telemetry frame SHALL end the wait as Standby finished until Standby has been requested again; once that stop is echoed or marked not confirmed, the pak SHALL request Standby again (advancing the counter by one) and wait for that request to finish, within the same 3 s from the press that started the leave, which a B press SHALL NOT extend. No other control SHALL change what the pak requests while it waits, and a second Menu or Power press SHALL NOT start another leave. When the wait ends, it SHALL stop sending command frames, and only then exit (Menu), run NextUI's suspend (a short Power press) or power off (Power held). Standby SHALL be the pak's only safety action on leaving: what the robot does once the pak's frames stop is `drive-link`'s link-loss rule. After a suspend returns, the pak SHALL be driving again, with the link's sequence counting rebaselined, and SHALL take no press until the link is live again.
 
 #### Scenario: Leave while idle
 - **WHEN** Menu is pressed while the robot reports no motion and telemetry keeps arriving
@@ -297,7 +309,7 @@ Before its link has started (while the address check or the join message is show
 
 #### Scenario: Quit before the link starts
 - **WHEN** the join message is shown and the user chooses quit or presses Menu
-- **THEN** the pak exits without having sent any datagram, with power saving restored
+- **THEN** the pak exits without having sent any datagram, with power saving restored and every saved network enabled
 
 #### Scenario: Robot does not answer
 - **WHEN** Menu is pressed and no telemetry arrives
