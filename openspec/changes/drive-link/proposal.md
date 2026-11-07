@@ -6,7 +6,7 @@ The stock firmware is driven only from its web portal in a phone browser (`/cont
 
 ## What Changes
 
-- The robot's access point is specified explicitly, keeping the stock network (`Spider Robot`, the password changed from stock `12345678` to `87654321` by the user; 192.168.4.1, set explicitly where stock presumably used the SDK default), a plain access point with no DNS or mDNS as in stock, so the pak and the restyled web portal share it.
+- The robot's access point is specified explicitly, with the network renamed from the stock `Spider Robot` to `mini-spooder` and the password changed from stock `12345678` to `87654321` by the user; 192.168.4.1, set explicitly where stock presumably used the SDK default), a plain access point with no DNS or mDNS as in stock, so the pak and the restyled web portal share it.
 - The robot listens on one UDP port for command frames from the pak, one frame per datagram.
 - A new link protocol, version 1, copies spooder's framing (start marker, version, type, sequence number, payload length, CRC-16/CCITT-FALSE; discard, resynchronise and count) with two new, smaller frames:
   - a command frame: the requested motion id (the stock `pm` numbers 1–15, 99 and 100; 0 for stop) and a motion-request counter;

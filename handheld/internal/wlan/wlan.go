@@ -22,7 +22,7 @@ const Interface = "wlan0"
 
 // The robot's access point (drive-link: Access point; design A1).
 const (
-	RobotSSID     = "Spider Robot"
+	RobotSSID     = "mini-spooder"
 	RobotPassword = "87654321"
 )
 
@@ -205,7 +205,7 @@ func ParseSignal(b []byte) (int, error) {
 // `iw dev wlan0 link`, as in
 //
 //	Connected to 02:00:00:00:00:00 (on wlan0)
-//		SSID: Spider Robot
+//		SSID: mini-spooder
 //		signal: -40 dBm
 //
 // Not connected (no signal line) reads as ErrNoSignal.

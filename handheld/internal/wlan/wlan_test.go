@@ -96,7 +96,7 @@ func TestNotJoinedNamesTheNetwork(t *testing.T) {
 		t.Fatalf("ran %v, want one renewal", run.calls)
 	}
 	msg := err.Error()
-	for _, want := range []string{`"Spider Robot"`, "87654321", "NextUI's WiFi settings", `"Home WiFi"`} {
+	for _, want := range []string{`"mini-spooder"`, "87654321", "NextUI's WiFi settings", `"Home WiFi"`} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("join message %q lacks %q", msg, want)
 		}
@@ -165,7 +165,7 @@ const wireless = `Inter-| sta-|   Quality        |   Discarded packets          
 `
 
 const iwLink = `Connected to 02:00:00:00:00:00 (on wlan0)
-	SSID: Spider Robot
+	SSID: mini-spooder
 	freq: 2412
 	signal: -47 dBm
 	rx bitrate: 72.2 MBit/s

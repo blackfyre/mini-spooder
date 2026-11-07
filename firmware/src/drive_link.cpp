@@ -40,7 +40,7 @@ UdpContext* udp = nullptr;
 bool started = false;
 
 // Access point settings (design D7): applied at every boot, never stored by the SDK.
-const char kSsid[] = "Spider Robot";
+const char kSsid[] = "mini-spooder";
 const char kPassword[] = "87654321";
 constexpr int kChannel = 1;
 constexpr int kMaxStations = 4;

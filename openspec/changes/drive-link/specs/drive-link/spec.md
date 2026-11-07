@@ -7,10 +7,10 @@ The robot side of the link between the robot and its remote, `MiniSpooder.pak` o
 ## ADDED Requirements
 
 ### Requirement: Access point
-The robot SHALL run a Wi-Fi access point with the stock network name `Spider Robot` and the password `87654321` (the stock password reversed, chosen by the user), with WPA2-PSK security, on channel 1. The robot SHALL have the address 192.168.4.1 with netmask 255.255.255.0, and SHALL lease addresses in that subnet to joining stations by DHCP. It SHALL accept at least two stations at the same time, so that the remote and a phone using the web portal can both join. The robot SHALL run in access point mode only and SHALL NOT join other networks. It SHALL NOT run a DNS server or an mDNS responder, as the stock firmware runs neither. It SHALL apply these settings from the firmware at every boot, with the SDK's persistent storage of Wi-Fi settings turned off, so that it neither stores them in the SDK's configuration sectors (0x3FC000–0x3FFFFF) nor depends on what those sectors hold.
+The robot SHALL run a Wi-Fi access point with the network name `mini-spooder` (renamed from the stock `Spider Robot` by the user) and the password `87654321` (the stock password reversed, chosen by the user), with WPA2-PSK security, on channel 1. The robot SHALL have the address 192.168.4.1 with netmask 255.255.255.0, and SHALL lease addresses in that subnet to joining stations by DHCP. It SHALL accept at least two stations at the same time, so that the remote and a phone using the web portal can both join. The robot SHALL run in access point mode only and SHALL NOT join other networks. It SHALL NOT run a DNS server or an mDNS responder, as the stock firmware runs neither. It SHALL apply these settings from the firmware at every boot, with the SDK's persistent storage of Wi-Fi settings turned off, so that it neither stores them in the SDK's configuration sectors (0x3FC000–0x3FFFFF) nor depends on what those sectors hold.
 
 #### Scenario: Remote joins
-- **WHEN** a station joins `Spider Robot` with the password `87654321`
+- **WHEN** a station joins `mini-spooder` with the password `87654321`
 - **THEN** it receives an address in 192.168.4.0/24 by DHCP and can reach 192.168.4.1
 
 #### Scenario: Remote and phone together
@@ -19,7 +19,7 @@ The robot SHALL run a Wi-Fi access point with the stock network name `Spider Rob
 
 #### Scenario: Boot with a different stored configuration
 - **WHEN** the SDK's configuration sectors hold another network name or password, stored by an earlier firmware
-- **THEN** the robot still starts `Spider Robot` with the password `87654321`
+- **THEN** the robot still starts `mini-spooder` with the password `87654321`
 
 #### Scenario: No name service
 - **WHEN** a joined station sends a DNS query to 192.168.4.1 on UDP port 53
