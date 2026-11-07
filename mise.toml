@@ -7,7 +7,8 @@ uv = "0.11.15"
 
 [env]
 # The robot's CP2102 adapter by its stable name: ttyUSB numbers change between plug-ins.
-ROBOT_PORT = "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"
+# A ROBOT_PORT already set in the shell (even to an empty value) takes precedence.
+ROBOT_PORT = "{{ get_env(name='ROBOT_PORT', default='/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0') }}"
 
 [tasks.backup]
 description = "Read the robot's full 4 MB flash to build/flash-<timestamp>.bin (read-only)"
@@ -27,3 +28,34 @@ esptool --port "$ROBOT_PORT" --baud 460800 write-flash 0 baseline/original-flash
 [tasks.monitor]
 description = "Open the robot's serial console at 115200 baud"
 run = 'pio device monitor -p "$ROBOT_PORT" -b 115200'
+
+[tasks.build]
+description = "Build the robot firmware (firmware/.pio/build/robot/firmware.bin) and check its header and flash layout"
+run = '''
+pio run -d firmware -e robot || exit 1
+python firmware/scripts/check_image.py firmware/.pio/build/robot/firmware.elf firmware/.pio/build/robot/firmware.bin
+'''
+
+[tasks.upload]
+description = "Build and check the robot firmware, then write it to $ROBOT_PORT only (never an auto-detected port)"
+run = '''
+if [ -z "${ROBOT_PORT:-}" ]; then
+  echo "upload: ROBOT_PORT is empty; set it to the robot's /dev/serial/by-id/ path" >&2
+  exit 1
+fi
+if [ ! -e "$ROBOT_PORT" ]; then
+  echo "upload: ROBOT_PORT names $ROBOT_PORT, which does not exist" >&2
+  exit 1
+fi
+mise run build || exit 1
+# Writes firmware.bin at 0x0 only, with no erase: 0x3FB000-0x3FFFFF (the
+# calibration and SDK data sectors) are left as they are.
+pio run -d firmware -e robot -t nobuild -t upload --upload-port "$ROBOT_PORT"
+'''
+
+[tasks.test]
+description = "Run the host tests (core/ Unity tests in the native env, then the build scripts' Python tests); no board needed"
+run = '''
+pio test -d firmware -e native || exit 1
+cd firmware/scripts && python -m unittest -v test_check_image
+'''

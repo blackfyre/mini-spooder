@@ -5,3 +5,4 @@ references/lafvin/
 # Delivery worktrees (one per OpenSpec change) and the CodeGraph index.
 .claude/worktrees/
 .codegraph/
+__pycache__/

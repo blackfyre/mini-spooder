@@ -1,0 +1,13 @@
+{
+  "name": "mini-spooder-core",
+  "version": "0.1.0",
+  "description": "Hardware-free mini-spooder firmware logic (no Arduino); host-tested with Unity",
+  "frameworks": "*",
+  "platforms": "*",
+  "build": {
+    "srcDir": ".",
+    "includeDir": ".",
+    "srcFilter": ["+<*>", "-<test/>", "-<fuzz/>"],
+    "flags": ["-Wall", "-Wextra", "-Werror"]
+  }
+}
