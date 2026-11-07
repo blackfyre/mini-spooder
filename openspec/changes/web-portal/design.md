@@ -47,9 +47,9 @@ The pages themselves are in `baseline/portal-strings.txt`: layout, labels, defau
 
 ### 1. A hardware-free request handler in `core/`, with a thin web-server layer in `firmware/`
 
-`core/` holds a pure function. It takes a request (method, path and arguments as strings) and a read-only context: is servo output in the safe state, is a motion or keyframe playing or pending, which motion ids exist, the accepted angle and trim ranges. It returns a result: the status, content type and body, plus at most one action (request motion n; stop and move servo i to a; store a trim; reset all trims; play a keyframe). `firmware/` maps the `ESP8266WebServer` callbacks onto it and carries out the action through the other capabilities' interfaces.
+`core/` holds a pure function. It takes a request (method, path and arguments as strings) and a read-only context: servo-output's mode (`idle`, `active`, `safe`, `fault`) and whether it would accept an enable request with origin `portal` now, is a motion or keyframe playing or pending, which motion ids exist, and the trim range. It returns a result: the status, content type and body, plus at most one action (request motion n; stop and move servo i to a; store a trim; reset all trims; play a keyframe). For a keyframe, the glue reports motion-playback's rejection back as 400. `firmware/` maps the `ESP8266WebServer` callbacks onto it and carries out the action through the other capabilities' interfaces.
 
-- *Why:* every rule in the spec (validation, 400/409/503, response bodies, ignored ids, `pms`, 404) can then be tested with Unity in the native environment, as spooder tests its link code.
+- *Why:* every rule in the spec (validation, the order of the 409, 503 and 400 checks, response bodies, ignored ids, `pms`, 404) can then be tested with Unity in the native environment, as spooder tests its link code.
 - *Alternative:* logic inside the Arduino handlers, tested only on the robot. This was rejected: none of it could be tested on the host.
 
 ```mermaid
@@ -60,7 +60,7 @@ flowchart LR
   WS -- "request motion / stop / keyframe" --> MP["motion-playback"]
   WS -- "command angle" --> SO["servo-output"]
   WS -- "read / store / reset trims" --> SC["servo-calibration"]
-  SO -- "safe state?" --> WS
+  SO -- "mode, portal enable permitted?" --> WS
   MP -- "busy?" --> WS
   WS -- "pages from flash" --> Phone
 ```
@@ -96,10 +96,10 @@ Valid requests keep their stock 200 bodies. For a stock client that sends valid 
 `/online` departs from stock's pacing. Stock played the keyframe inside the handler and replied after it. Here the handler validates, hands the keyframe to motion-playback and replies at once. The firmware's main loop advances the player and the servo output, so the portal adds no service path of its own and the keyframe reaches the servos as any motion does.
 
 - *Why:* a handler that waits holds the web server (the Arduino web server serves one client at a time) for up to the keyframe's duration. Other clients could not load a page or send a command for that long, and every service step in the wait would have to repeat the main loop's order (failsafe, player, servo output) to be safe.
-- *Cost:* a client that paced keyframes by the replies now receives them early. No stock page uses `/online` (Open questions), and the order of consecutive keyframes is motion-playback's request rule, so a client that sends them in sequence still sees them played as motion-playback defines.
+- *Cost:* a client that paced keyframes by the replies now receives them early. Under motion-playback's rule a keyframe accepted while another plays becomes the single pending request, replacing any earlier pending one, so a client that sends three keyframes in quick succession while nothing plays sees the first played (it starts at once), the second replaced while pending, and the third played after the first; while a motion plays, only the third plays after it. No stock page sends `/online` (`baseline/README.md`), so no known client is affected.
 - *Alternative:* keep stock's reply-after-move pacing with a bounded wait that services the other tasks. Rejected for the reasons above.
 
-`t1` is bounded at 0–60000 ms. Stock does not bound it. The bound only rejects durations that no keyframe in the stock tables comes near (the longest is 1500 ms), and motion-playback defines what 0 ms does.
+`t1` is bounded at 0–60000 ms. Stock does not bound it. It is motion-playback's keyframe range, as are the angles 0–180; the portal checks them so that it can answer 400 without a call, and motion-playback defines what 0 ms does.
 
 ```mermaid
 sequenceDiagram
@@ -108,7 +108,7 @@ sequenceDiagram
   participant P as motion-playback
   participant L as main loop
   C->>W: GET /online?m0..m7&t1=1000
-  W->>W: safe state? (503) / validate (400)
+  W->>W: mode and portal enable (503 / 409) / validate (400)
   W->>P: play keyframe (8 angles, 1000 ms)
   W-->>C: 200 "(m0, m1)=(a0,a1)"
   loop every player tick
@@ -119,29 +119,44 @@ sequenceDiagram
 
 ### 6. Shared control with the remote; saves only while nothing plays
 
-drive-link's command frame carries a motion-request counter, so a frame with an unchanged counter makes no request, and a portal request is not undone by the remote's next frame. drive-link therefore specifies that portal and remote requests both reach motion-playback and the most recent one wins. The portal follows that policy and does not refuse requests while a remote's session is live. The earlier draft's 409 for a connected remote is dropped: it contradicted drive-link's coexistence requirement and its hardware check (Dance 1 requested from the phone during a session).
+drive-link leaves the portal's handling of its own requests during a session to this change, and its counter-based frames make a request only when the remote's counter changes, so a portal request is neither undone nor replayed by the remote's next frames. The portal therefore does not refuse requests because a session is live: while output is `active`, portal and remote requests both reach motion-playback and the most recent wins by its rules, and the pak sees the result in telemetry. While output is off, servo-output decides whether a portal request may bring it back (decision 7), which during a session it does not allow.
 
-A trim change takes effect at once in servo-output, so a save moves a held servo by the difference in trim. The portal accepts a save only when motion-playback reports nothing playing or pending, and answers 409 otherwise. This keeps the movement a save causes to one servo standing still, and it matches stock, which could not save during a motion because it served no HTTP then. `/save` no longer detaches and reattaches the servos as stock did. Stock's re-attach also changed the pin of each servo index (a stock defect); servo-output owns the pin map now, and servo-calibration owns how the write is protected.
+- *Alternative:* refuse every portal movement during a session. Not taken: no other change requires it, and the stock portal had no such rule. Whether the phone should be locked out while the pak drives is a product question (Open questions).
 
-- *Alternative:* refuse portal movement while a remote is connected (the earlier draft). Rejected: drive-link's counter-based frames do not fight portal requests, and the link-loss failsafe (decision 7) covers safety.
+A trim change takes effect at once in servo-output (servo-calibration), so a save moves a held servo by the difference in trim. The portal accepts a save only when motion-playback reports nothing playing or pending, and answers 409 `motion playing` otherwise. This keeps the movement a save causes to one servo standing still, and it matches stock, which could not save during a motion because it served no HTTP then. `/save` no longer detaches and reattaches the servos as stock did; servo-output owns the pin map, and servo-calibration owns how the write is protected.
+
 - *Alternative:* accept saves during a motion. Rejected: the joint would shift mid-motion, and stock never did it.
 
-### 7. The safe state outranks the portal
+### 7. Servo output modes decide what the portal passes on
 
-The link-loss failsafe has the highest priority: once a remote's frames stop, neither the player nor the portal may keep moving the servos. firmware-foundation owns the output gate and the mode in which servo output is disabled; drive-link enters it on link loss. The portal reads that state from servo-output. While it is set, every robot-moving request gets 503 before validation, and the portal has no request that leaves it or enables output. Pages and `/save` stay available, because they do not drive a servo: a save in the safe state only changes the stored trim.
+firmware-foundation owns the output modes and when output may be enabled again: only on behalf of an explicit motion or keyframe request, from a new drive-link session, or from the portal (origin `portal`) while no session is live; never for a direct servo command; never in `fault`. motion-playback carries the enable out at the first tick of the motion or keyframe. servo-output reports, per origin, whether an enable would be accepted now. The portal reads the mode and that report, and:
+
+- in `active`, passes on `pm`, `servo` and `/online`;
+- in `idle` or `safe` with portal enable permitted, passes on `pm` and `/online`, and refuses `servo` with 503 `servo output off`, because servo-output rejects a single-servo command outside `active` and a direct servo command makes no enable request;
+- in `idle` or `safe` with portal enable not permitted (a session is live), refuses all three with 409 `remote in control`, because only the remote's next request can bring output back;
+- in `fault`, refuses all three with 503 `servo output fault`; `/setting` and `/save` stay available so that the damaged trim can be repaired, after which servo-output moves to `safe`.
+
+Refusing up front, instead of passing a request that motion-playback's enable would then reject, keeps the 200 reply meaningful. The portal never calls enable or the safe-state request itself, and the mode check comes before validation.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Accepting
-  Accepting --> SafeState: servo-output reports safe state (fault, link loss)
-  SafeState --> SafeState: pm / servo / online -> 503
-  SafeState --> Accepting: servo-output reports safe state ended
-  Accepting --> Accepting: pm / servo / online -> 200 or 400
+  [*] --> Off: boot (idle)
+  Off --> Active: pm or /online passed on, enable with origin portal accepted
+  Active --> Off: link loss (safe)
+  Active --> Fault: calibration fault
+  Off --> Fault: calibration fault
+  Fault --> Off: trims repaired via /save (safe)
+  Off --> Off: servo -> 503 servo output off, or 409 while a session is live
+  Fault --> Fault: pm / servo / online -> 503 servo output fault
+  Active --> Active: pm / servo / online passed on
 ```
+
+- *Cost:* after boot, the Zero check page's servo buttons answer 503 until a motion has run. Its Zero position button (`pm=100`) is that motion, and the status line says so. Stock moved a single servo straight after boot (Open questions).
+- *Race:* a session can start between the portal's reply and the player's first tick. drive-link's session-start stop then discards the pending request, so nothing is enabled or played, although the portal answered 200. The window is one loop pass.
 
 ### 8. No captive-portal DNS
 
-The stock image starts a plain soft AP with no DNS server and no mDNS (Context). Adding captive DNS would be a feature beyond stock, so the spec states that there is none, and unknown paths get the stock 404. A later change can add it if the user wants phones to open the portal on joining.
+The stock image starts a plain soft AP with no DNS server and no mDNS (Context). Adding captive DNS would be a feature beyond stock. drive-link specifies the access point without DNS or mDNS; this change's spec only states that the portal does not redirect, and that unknown paths get the stock 404. A later change can add it if the user wants phones to open the portal on joining.
 
 ### 9. Presentation departures
 
@@ -159,19 +174,19 @@ The changes from stock are limited to presentation and stock defects:
 
 These are facts that other changes own. This change relies on them and does not specify them.
 
-- **drive-link:** defines the soft access point (stock SSID and password, 192.168.4.1) and admits at least two stations at once (the pak and a phone). Its coexistence rule is that portal and remote requests both reach motion-playback and the most recent wins, and a frame with an unchanged request counter makes no request. On link loss it puts servo output into the safe state through firmware-foundation's gate. The portal does not read drive-link's session state.
-- **motion-playback:** defines the motion ids (stock pm 1–15, 99 Centre with the stock zero pose, and 100 Zero position), a request call that the drive link also uses, a stop call, and a call that plays one caller-supplied keyframe (eight angles and a duration of 0–60000 ms, including what 0 ms means) from the current commanded pose with the same interpolation as table keyframes. It reports whether a motion or keyframe is playing or pending. It is non-blocking: it advances in the main loop's periodic step. It defines what a new request or keyframe does while a motion plays, and it respects the safe state.
-- **servo-output (firmware-foundation):** commands servo i (0–7) to an angle, adds servo-calibration's trim, then clamps the result to that servo's safe range, and publishes its accepted input-angle range; the editor's 45–135 sliders and the zero-check angles 45° and 135° lie within it. Its index-to-GPIO map is 15, 13, 12, 14, 2, 4, 5, 16 (the stock startup order), which the page labels show. It keeps one commanded pose per servo, updated by direct commands as well as by the player, from which motion-playback starts the next motion. It owns the output gate and the safe state (entered on a fault or link loss, and how it ends), and reports whether the safe state is set. A changed trim takes effect on a held servo at once.
-- **servo-calibration (firmware-foundation):** exposes read trim i, store trim i, reset all to 0, and one accepted trim range that the portal validates against. Stock accepts −124…124; the range that firmware-foundation settles is the portal's range. It owns persistence across power cycles, the value of an erased trim (stock reads −1), and how the stored trims are protected during a write.
-- **firmware-foundation:** provides the PlatformIO environment (Arduino ESP8266 core, 4 MB), the main loop that runs the failsafe, player, HTTP and servo output without blocking, accepts a `pre:` extra script, and provides the native Unity test environment for `core/` with `mise run build`, `mise run upload` and `mise run test`.
+- **drive-link:** defines the soft access point (stock SSID and password, 192.168.4.1) and its name services (no DNS server, no mDNS), and admits at least two stations at once (the pak and a phone). It does not refuse, undo or replay portal requests, and leaves the portal's handling of them during a session to this change. When a session starts, it calls motion-playback's stop, which ends a portal motion or keyframe. On link loss it calls stop and requests the safe state, and it never re-enables output.
+- **motion-playback:** provides the catalogue (stock pm 1–15, 99 Centre, 100 Zero position), a request call that the drive link also uses (rejecting other ids), a stop call (ends the current motion or keyframe before the next tick, discards the pending request, holds the last angles), and a single-keyframe call (eight angles 0–180 and 0–60000 ms, rejecting values out of range; accepted like a motion request, so it becomes the single pending request while something plays). It reports whether a motion or keyframe is playing or pending. It is non-blocking. When output is not enabled at the first tick of a motion or keyframe, it makes servo-output's enable request with the zero pose and the request's origin (`portal` for the portal's requests), and ends the request if the enable is rejected.
+- **servo-output (firmware-foundation):** reports the output mode (`idle`, `active`, `safe`, `fault`). It accepts a single-servo command (angle 0–180, before the trim) only in `active` with the current writer token, which the portal's glue obtains through firmware-foundation's interface; it adds the trim and limits the result to the servo's safe range. Its index-to-GPIO map is 15, 13, 12, 14, 2, 4, 5, 16, which the page labels show. Its commanded angles, updated by direct commands too, are where motion-playback starts the next motion. It owns how output is enabled again: only for an explicit motion or keyframe request, from a new pak session (origin `link`) or from the portal while no session is live (origin `portal`), never for a direct servo command. It reports per origin whether an enable would be accepted now, rejects enable in `fault`, and leaves `fault` for `safe` once every trim is valid.
+- **servo-calibration (firmware-foundation):** exposes read trim i, set trim i (accepted only for 0–7 and −124…+124, allowed in every mode), and reset all to 0. A changed trim takes effect on a driven servo at once. It owns persistence, the value of an erased trim (−1), and how the write is protected.
+- **firmware-foundation:** provides the PlatformIO environment (Arduino ESP8266 core, 4 MB), the main loop that runs the drive link, player, HTTP and servo output without blocking, accepts a `pre:` extra script, and provides the native Unity test environment for `core/` with `mise run build`, `mise run upload` and `mise run test`.
 
 ## Risks / Trade-offs
 
 - [The stock handler behaviour comes from disassembly without symbols, so a function could be misidentified] → The routes, parameters, bodies and the EEPROM path agree with the vendor sketch and with `docs/lafvin-comparison.md`. The hardware checks in tasks.md compare the new firmware with what stock did on the robot.
 - [A 400 for input that stock accepted could break an unknown stock client] → Only malformed or out-of-range input is refused, and stock acted on that input dangerously (0° moves, writes to arbitrary EEPROM bytes). Unknown integer `pm` values keep the stock 200.
 - [`/online` replies before the move ends, unlike stock] → No stock page uses it. A client that paced by the replies gets keyframes handled by motion-playback's request rule instead.
-- [A portal command and a remote command interleave during a session] → The most recent wins, as drive-link specifies; each side sees the result in its own feedback (the pak in telemetry, the portal only in its status line, which reports acceptance, not what plays later).
-- [The safe state leaves the portal unable to move the robot until servo-output ends it] → Intended: the failsafe outranks the portal. The status line says why. How the safe state ends is firmware-foundation's (Open questions).
+- [A portal command and a remote command interleave during a session] → The most recent wins by motion-playback's rules; the pak sees the result in telemetry, and the portal's status line reports acceptance, not what plays later.
+- [After link loss the robot is limp until someone requests a motion] → Intended: firmware-foundation's rule. With no session live, any portal motion button brings output back; single-servo buttons answer `servo output off` until then, and the status line says what to do.
 - [The heap is fragmented by chunked `/setting` responses] → Only eight short integers are formatted per request, into a stack buffer.
 - [The vendored tokens drift from the design system] → `SOURCE.md` records the version and hash. Updating them is a deliberate copy followed by `mise run portal-check`.
 - [The page labels drift from the pin map] → `portal-check` compares `servo_labels.json` with servo-output's table.
@@ -186,7 +201,7 @@ These are facts that other changes own. This change relies on them and does not 
 
 ## Open Questions
 
-- **Calibration in the original firmware.** The user recalls that the original firmware had no calibration. The stock image read from this robot has the Servo calibration page, a `/save` handler that writes signed bytes 0–7 of the EEPROM emulation sector at 0x3FB000 and commits them, and a servo write that adds that byte (Context table). Unverified: whether a stock save actually persists on this robot, since no stock save has been tried. The sector is erased (all 0xFF) on this unit, which shows that no saved data is present now, not that nothing was ever saved. Also unverified: whether Jason Workshop's original Q1 mini firmware had calibration; the user's recollection may concern that firmware, not this port. This does not change this change's routes.
-- **Is `/online` used by the motion editor?** `baseline/README.md` and the corrections to this plan describe `/online` as "used by the motion editor", and a cross-change review asked for the editor to send it. The stock image does not support that: the only occurrence of `online` in `baseline/portal-strings.txt` is the route registration, the editor's JavaScript sends only `controller?servo=…` and `controller?pm=1`, and `strings` over the whole dump finds `/online` and its reply format and nothing that builds an `online?` URL. So the replacement editor, like the stock one, does not send `/online`, and the route stays for other clients. If the user wants an editor button that plays the Action Code through `/online`, it is a new control and a decision for the user; `baseline/README.md`'s wording may need correcting (outside this change).
-- **How the safe state ends.** The portal refuses movement while servo-output reports the safe state and cannot end it. If firmware-foundation's rule ends it only on a fresh drive-link session or a reboot, a phone user cannot use the portal after the pak's link was lost until then. That rule is firmware-foundation's.
+- **Single servo commands straight after boot.** firmware-foundation's rule is that a direct servo command never enables output, so the Zero check and Motion editor servo controls answer 503 until a motion (for example Zero position or Standby) has run. Stock moved a single servo straight after boot. firmware-foundation records this departure as a product question for the user; this change follows whatever it settles and adds no rule of its own.
+- **Phone and pak at once.** With output `active`, the portal accepts movement during a pak session and the most recent request wins; neither the stock firmware nor the settled decisions say whether the phone should instead be locked out while the pak drives. This change keeps the stock-like behaviour until the user decides.
+- **Calibration persistence on this robot.** The stock image saves trims to EEPROM bytes 0–7 (Context table), but no stock save has been tried on this unit, whose sector is erased. Hardware task 6.6 checks persistence with the new firmware. This does not change the routes.
 - **mDNS.** The image contains a `.local` string, but no mDNS call was traced in `setup()`, so the portal does not announce one.

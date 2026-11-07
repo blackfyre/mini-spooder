@@ -2,12 +2,12 @@
 
 ## Purpose
 
-The robot's web portal on its own access point. It reproduces the stock firmware's pages and routes for driving motions, moving single servos, checking the zero pose, calibrating the servos and editing poses. It is restyled in the Blackfyre Paper theme and shares the robot with the MiniSpooder.pak remote.
+The robot's web portal on its own access point. It reproduces the stock firmware's pages and routes for driving motions, moving single servos, checking the zero pose, calibrating the servos and editing poses. It is restyled in the Blackfyre Paper theme and gives way to the MiniSpooder.pak remote while the remote drives the robot.
 
 ## ADDED Requirements
 
 ### Requirement: Portal server and address
-The firmware SHALL serve the portal over HTTP on TCP port 80 at the robot's address on its own access point. drive-link defines the access point. The server SHALL be up within 10 seconds of power-on and SHALL stay up while the firmware runs, also while a motion or a keyframe plays and while a remote's session is live. No route handler SHALL wait for a motion or a keyframe to end. The routes SHALL answer `GET` requests. A request for any other path, or a request with any other method, SHALL be answered with status 404, content type `text/plain` and the body `Not found: <path>`, as the stock image's web server does. The portal SHALL NOT run a DNS server, announce an mDNS name or redirect requests, because the stock image does none of these.
+The firmware SHALL serve the portal over HTTP on TCP port 80 at the robot's address on its own access point. drive-link defines the access point. The server SHALL be up within 10 seconds of power-on and SHALL stay up while the firmware runs, also while a motion or a keyframe plays and while a remote's session is live. No route handler SHALL wait for a motion or a keyframe to end. The routes SHALL answer `GET` requests. A request for any other path, or a request with any other method, SHALL be answered with status 404, content type `text/plain` and the body `Not found: <path>`, as the stock image's web server does. The portal SHALL NOT redirect requests, as the stock image does not; the access point's name services are drive-link's.
 
 #### Scenario: Phone opens the portal
 - **WHEN** a phone joined to the robot's access point requests `http://<robot address>/`
@@ -44,15 +44,19 @@ The pages SHALL use the Blackfyre design system's Paper theme. Every colour, sha
 - **THEN** it shows a 2 px `bf-accent` outline offset by 3 px
 
 ### Requirement: Navigation and command feedback
-Every page SHALL show a navigation bar linking the four pages: Controller (`/`), Zero check (`/zero`), Servo calibration (`/setting`) and Motion editor (`/editor`). The bar SHALL mark the current page. Every page that sends commands SHALL show a status line with the outcome of its most recent command: sent (status 200), not run because servo output is in the safe state (status 503), not saved because a motion is playing (status 409), invalid (status 400), or no answer from the robot within 5 seconds. A no-answer outcome SHALL say that the command may still have run. A command SHALL NOT reload the page.
+Every page SHALL show a navigation bar linking the four pages: Controller (`/`), Zero check (`/zero`), Servo calibration (`/setting`) and Motion editor (`/editor`). The bar SHALL mark the current page. Every page that sends commands SHALL show a status line with the outcome of its most recent command, one distinct message for each of: sent (status 200); not run because a remote is driving the robot and output is off (status 409, body `remote in control`); not saved because a motion is playing (status 409, body `motion playing`); not run because servo output is off, with the hint to start a motion first (status 503, body `servo output off`); not run because of a calibration fault, with the hint to repair the trims on the Servo calibration page (status 503, body `servo output fault`); invalid (status 400); or no answer from the robot within 5 seconds. A no-answer outcome SHALL say that the command may still have run. A command SHALL NOT reload the page.
 
 #### Scenario: Navigate to calibration
 - **WHEN** the operator taps Servo calibration in the navigation bar on the Controller page
 - **THEN** the browser opens `/setting`, and the bar marks Servo calibration as the current page
 
-#### Scenario: Command refused in the safe state
-- **WHEN** the operator taps Forward while servo output is in the safe state
-- **THEN** the status line says that servo output is in the safe state and that the command was not run, and the page stays open
+#### Scenario: Command refused during a session
+- **WHEN** the operator taps Forward while servo output is off and a remote's session is live
+- **THEN** the status line says that a remote is driving the robot and that the command was not run, and the page stays open
+
+#### Scenario: Servo button before any motion
+- **WHEN** the operator taps a servo button on the Zero check page while servo output is off
+- **THEN** the status line says that servo output is off and that a motion, such as Zero position, must be started first
 
 #### Scenario: Robot out of reach
 - **WHEN** the operator taps a control and no response arrives within 5 seconds
@@ -70,22 +74,22 @@ Every page SHALL show a navigation bar linking the four pages: Controller (`/`),
 - **THEN** it shows exactly fifteen motion buttons, one for each number from 1 to 15, labelled with the stock names
 
 ### Requirement: Motion request
-`GET /controller?pm=<n>`, where n is a decimal integer, SHALL be answered with status 200, content type `text/html` and the body `(pm)=(<pm>)`, where `<pm>` is the `pm` argument exactly as received (so `pm=02` gives `(pm)=(02)`, as stock echoes the argument string). The response SHALL be sent without waiting for any motion to finish. If n is a motion id that motion-playback defines (the stock ids 1–15, 99 and 100), the portal SHALL request that motion from motion-playback, and the request SHALL have the same effect as the same request from the drive link. If n is any other integer, the portal SHALL do nothing, as stock accepts and ignores unknown `pm` values. The behaviour when a motion is already playing SHALL be motion-playback's. A `pm` that is empty or not an integer SHALL be answered with status 400, and no motion starts.
+`GET /controller?pm=<n>`, where n is a decimal integer, SHALL be answered with status 200, content type `text/html` and the body `(pm)=(<pm>)`, where `<pm>` is the `pm` argument exactly as received (so `pm=02` gives `(pm)=(02)`, as stock echoes the argument string). The response SHALL be sent without waiting for any motion to finish. If n is a motion id in motion-playback's catalogue (the stock ids 1–15, 99 and 100), the portal SHALL pass it to motion-playback's request call, the same call that the drive link uses. If n is any other integer, the portal SHALL do nothing, as stock accepts and ignores unknown `pm` values. What a request does while a motion plays, and how it brings servo output back when output is off, are motion-playback's and firmware-foundation's. A `pm` that is empty or not an integer SHALL be answered with status 400, and no motion is requested. The refusals of "Servo output modes" SHALL apply first.
 
 #### Scenario: Start a motion
-- **WHEN** a client requests `GET /controller?pm=9` and servo output is not in the safe state
-- **THEN** the response is status 200 with the body `(pm)=(9)`, and the robot plays Say Hi
+- **WHEN** servo output is `active`, and a client requests `GET /controller?pm=9`
+- **THEN** the response is status 200 with the body `(pm)=(9)`, and motion-playback is asked for motion 9 (Say Hi)
 
 #### Scenario: Zero position and Centre
-- **WHEN** a client requests `GET /controller?pm=100`, or `GET /controller?pm=99`
+- **WHEN** servo output is `active`, and a client requests `GET /controller?pm=100`, or `GET /controller?pm=99`
 - **THEN** the response is status 200, and motion-playback is asked for motion 100 (Zero position), or for motion 99 (Centre)
 
 #### Scenario: Unknown motion id
-- **WHEN** a client requests `GET /controller?pm=21`
+- **WHEN** servo output is `active`, and a client requests `GET /controller?pm=21`
 - **THEN** the response is status 200 with the body `(pm)=(21)`, no motion is requested, and no servo moves
 
 #### Scenario: Malformed motion id
-- **WHEN** a client requests `GET /controller?pm=2a`
+- **WHEN** servo output is `active`, and a client requests `GET /controller?pm=2a`
 - **THEN** the response is status 400, and no motion is requested
 
 #### Scenario: Page stays responsive during a motion
@@ -93,23 +97,23 @@ Every page SHALL show a navigation bar linking the four pages: Controller (`/`),
 - **THEN** the Zero check page is returned within 1 second, before the motion ends
 
 ### Requirement: Direct servo command
-`GET /controller?servo=<i>&value=<a>`, with a servo index i from 0 to 7 and an integer angle a within servo-output's accepted input-angle range, SHALL first stop any playing motion through motion-playback. It SHALL then command servo i to angle a through servo-output. The calibration trim and the per-servo safe range are servo-output's and servo-calibration's: the portal SHALL pass the requested angle unchanged and SHALL NOT clamp or offset it itself. The response SHALL be status 200, content type `text/html` and the body `(pm)=()`. A missing, non-integer or out-of-range `servo` or `value` SHALL be answered with status 400, and no servo moves. When a request carries both `pm` and `servo`, the request SHALL be answered with status 400, and nothing moves.
+`GET /controller?servo=<i>&value=<a>`, with a servo index i from 0 to 7 and an integer angle a from 0 to 180, SHALL first call motion-playback's stop. It SHALL then command servo i to angle a through servo-output. The portal SHALL pass the requested angle unchanged and SHALL NOT clamp or offset it itself. The response SHALL be status 200, content type `text/html` and the body `(pm)=()`. A missing, non-integer or out-of-range `servo` or `value` SHALL be answered with status 400, and nothing is stopped or commanded. When a request carries both `pm` and `servo`, the request SHALL be answered with status 400, and nothing is requested, stopped or commanded. A direct servo command SHALL be accepted only while servo-output reports mode `active`; the refusals of "Servo output modes" SHALL apply first.
 
 #### Scenario: Move one servo
-- **WHEN** a client requests `GET /controller?servo=3&value=110` and servo output is not in the safe state
+- **WHEN** servo output is `active`, and a client requests `GET /controller?servo=3&value=110`
 - **THEN** servo-output is commanded to move servo 3 to 110°, and the response body is `(pm)=()`
 
 #### Scenario: Missing value
-- **WHEN** a client requests `GET /controller?servo=3`
-- **THEN** the response is status 400, and servo 3 does not move
+- **WHEN** servo output is `active`, and a client requests `GET /controller?servo=3`
+- **THEN** the response is status 400, and servo 3 receives no command
 
 #### Scenario: Index out of range
-- **WHEN** a client requests `GET /controller?servo=9&value=90`
-- **THEN** the response is status 400, and no servo moves
+- **WHEN** servo output is `active`, and a client requests `GET /controller?servo=9&value=90`
+- **THEN** the response is status 400, and no servo receives a command
 
 #### Scenario: Servo command during a motion
 - **WHEN** a client requests `GET /controller?servo=0&value=90` while Forward is playing
-- **THEN** motion-playback is told to stop Forward, and servo-output is then commanded to move servo 0 to 90°
+- **THEN** motion-playback's stop is called, and servo-output is then commanded to move servo 0 to 90°
 
 ### Requirement: Unused pms parameter
 The `pms` parameter of `/controller` SHALL have no effect, as in the stock image. The stock controller page defines a `controlPms` function, but no control calls it, and the stock handler never reads `pms`. A request that carries only `pms` SHALL be answered with status 200, content type `text/html` and the body `(pm)=()`. No page SHALL send `pms`.
@@ -151,17 +155,17 @@ The `pms` parameter of `/controller` SHALL have no effect, as in the stock image
 ### Requirement: Calibration save
 `GET /save?key=<i>&value=<v>`, with i from 0 to 7 and an integer v within servo-calibration's accepted trim range, SHALL ask servo-calibration to store v as servo i's trim. The response SHALL be status 200, content type `text/html` and the body `(key, value)=(<i>,<v>)`, with the key and value as decimal integers. `GET /save?key=100` SHALL ask servo-calibration to reset every servo's trim to 0. Its `value` parameter is ignored and may be missing or malformed, as in stock, and the body SHALL always be `(key, value)=(100,0)`. Any other key, or a missing, non-integer or out-of-range value for keys 0 to 7, SHALL be answered with status 400, and no trim changes.
 
-A save SHALL be accepted only while motion-playback reports that no motion or keyframe is playing or pending. Otherwise it SHALL be answered with status 409, content type `text/plain` and a body saying that a motion is playing, and no trim changes. Stock serves no HTTP while a motion plays, so it never saves during one either. A save SHALL be accepted while a remote's session is live and while servo output is in the safe state.
+A save SHALL be accepted only while motion-playback reports that no motion or keyframe is playing or pending. Otherwise it SHALL be answered with status 409, content type `text/plain` and the body `motion playing`, and no trim changes. Stock serves no HTTP while a motion plays, so it never saves during one either. A save SHALL be accepted in every servo output mode, including `fault`, so that a damaged trim can be repaired, and while a remote's session is live.
 
-The portal SHALL NOT command any servo or request any motion as part of a save. servo-output applies a changed trim at once: a servo that is being held at an angle moves by the difference between its old and new trim, within servo-output's per-servo safe range, and no other servo moves. Persistence, and how servo-calibration protects the stored trims during the write, are servo-calibration's.
+The portal SHALL NOT command any servo, request or stop any motion, or change the servo output mode as part of a save.
 
 #### Scenario: Save a trim
 - **WHEN** no motion is playing and a client requests `GET /save?key=1&value=-5`
 - **THEN** the response body is `(key, value)=(1,-5)`, servo-calibration is asked to store -5 for servo 1, and a following `GET /setting` shows `-5` in the `S1` field
 
 #### Scenario: Save while a servo is held
-- **WHEN** servo 1 is held at 90° with a trim of 0, no motion is playing, and a client requests `GET /save?key=1&value=-5`
-- **THEN** the portal issues no servo command and no motion request, servo 1 moves to the output of 90° with a trim of -5, and no other servo moves
+- **WHEN** servo 1 is held at 90°, no motion is playing, and a client requests `GET /save?key=1&value=-5`
+- **THEN** the response is status 200, servo-calibration is asked to store -5 for servo 1, and the portal issues no servo command, no motion request and no stop
 
 #### Scenario: Save during a motion
 - **WHEN** Forward is playing and a client requests `GET /save?key=1&value=-5`
@@ -173,10 +177,14 @@ The portal SHALL NOT command any servo or request any motion as part of a save. 
 
 #### Scenario: Key outside the servos
 - **WHEN** a client requests `GET /save?key=50&value=3`
-- **THEN** the response is status 400, and no stored data changes
+- **THEN** the response is status 400, and servo-calibration is not called
+
+#### Scenario: Repair in fault
+- **WHEN** servo output is in `fault` because servo 2's stored trim is invalid, and a client requests `GET /save?key=2&value=0`
+- **THEN** the response is status 200 with the body `(key, value)=(2,0)`, and servo-calibration is asked to store 0 for servo 2
 
 ### Requirement: Motion editor page
-`GET /editor` SHALL return the Motion editor page with status 200 and content type `text/html`. For each servo, in the arrangement and labels of the Zero check page, the page SHALL show a slider from 45 to 135, a text field and a Send button. Each servo SHALL also show its stock default angle: 70 for servos 0 and 7, 110 for servos 3 and 4, and 90 for servos 1, 2, 5 and 6. Slider and field SHALL start at that default. The sliders of servos 0, 1, 4 and 5 SHALL run from 135 on the left to 45 on the right. The sliders of servos 2, 3, 6 and 7 SHALL run from 45 on the left to 135 on the right. Releasing a slider, or tapping Send, SHALL copy the value to both the slider and the field of that servo and send `GET /controller?servo=<i>&value=<value>`. The page SHALL show an Action Code line: the eight current field values in servo order 0 to 7, separated by `, `. The line SHALL update on load and on every change. A Standby button SHALL send `GET /controller?pm=1`. As in the stock editor, the page SHALL send no other request.
+`GET /editor` SHALL return the Motion editor page with status 200 and content type `text/html`. For each servo, in the arrangement and labels of the Zero check page, the page SHALL show a slider from 45 to 135, a text field and a Send button. Each servo SHALL also show its stock default angle: 70 for servos 0 and 7, 110 for servos 3 and 4, and 90 for servos 1, 2, 5 and 6. Slider and field SHALL start at that default. The sliders of servos 0, 1, 4 and 5 SHALL run from 135 on the left to 45 on the right. The sliders of servos 2, 3, 6 and 7 SHALL run from 45 on the left to 135 on the right. Releasing a slider SHALL copy its value to that servo's field and send `GET /controller?servo=<i>&value=<value>`. Tapping Send SHALL send the field's text unchanged as `value`, as the stock editor does, and SHALL set the slider to it, which the slider shows limited to 45–135; the field keeps the typed text. A typed value that the robot refuses is reported in the status line (400). The page SHALL show an Action Code line: the eight current field values in servo order 0 to 7, separated by `, `. The line SHALL update on load and on every change. A Standby button SHALL send `GET /controller?pm=1`. As in the stock editor, the page SHALL send no other request.
 
 #### Scenario: Move a slider
 - **WHEN** the operator releases the `S6` slider at 120
@@ -190,47 +198,72 @@ The portal SHALL NOT command any servo or request any motion as part of a save. 
 - **WHEN** the operator types 100 in the `S0` field and taps Send
 - **THEN** the `S0` slider moves to 100, and the page sends `GET /controller?servo=0&value=100`
 
+#### Scenario: Typed value beyond the slider
+- **WHEN** the operator types 170 in the `S0` field and taps Send
+- **THEN** the page sends `GET /controller?servo=0&value=170`, the `S0` slider shows 135, the field shows 170, and the Action Code line shows 170 for servo 0
+
 ### Requirement: Online keyframe
-`GET /online?m0=<a0>&m1=<a1>&...&m7=<a7>&t1=<t>` SHALL hand one keyframe to motion-playback: servos 0 to 7 move from their current commanded angles to the angles a0 to a7 over t milliseconds, with the same interpolation, trim and safe range as the keyframes of a stock motion. All nine parameters SHALL be required. Each angle SHALL be an integer within servo-output's accepted input-angle range, and t SHALL be an integer from 0 to 60000. The request SHALL have the same effect on a playing motion as a motion request has, as motion-playback defines. The response SHALL be status 200, content type `text/html` and the body `(m0, m1)=(<a0>,<a1>)`, sent as soon as motion-playback has accepted the keyframe, without waiting for it to end. Stock replied only after the keyframe; this departure keeps the server and the main loop free while the keyframe plays. A missing, non-integer or out-of-range parameter SHALL be answered with status 400, and nothing moves. No stock page sends `/online`, and no portal page SHALL send it.
+`GET /online?m0=<a0>&m1=<a1>&...&m7=<a7>&t1=<t>` SHALL pass one keyframe to motion-playback's single-keyframe call: the angles a0 to a7 for servos 0 to 7 and the duration t in milliseconds. All nine parameters SHALL be required. Each angle SHALL be an integer from 0 to 180, and t SHALL be an integer from 0 to 60000. How the keyframe is played, what it does to a playing motion or keyframe, and how it brings servo output back when output is off, are motion-playback's and firmware-foundation's. The response SHALL be status 200, content type `text/html` and the body `(m0, m1)=(<a0>,<a1>)`, sent as soon as motion-playback has accepted the keyframe, without waiting for it to end. Stock replied only after the keyframe; this departure keeps the server and the main loop free while the keyframe plays. A missing, non-integer or out-of-range parameter SHALL be answered with status 400, and no keyframe is passed. If motion-playback rejects the keyframe, the response SHALL be status 400. The refusals of "Servo output modes" SHALL apply first. No stock page sends `/online`, and no portal page SHALL send it.
 
 #### Scenario: Play a keyframe
-- **WHEN** a client requests `GET /online?m0=70&m1=90&m2=90&m3=110&m4=110&m5=90&m6=90&m7=70&t1=1000` and servo output is not in the safe state
-- **THEN** the response `(m0, m1)=(70,90)` arrives within 1 second of the request, before the move ends, and the robot moves to that pose over about 1000 ms
+- **WHEN** servo output is `active`, and a client requests `GET /online?m0=70&m1=90&m2=90&m3=110&m4=110&m5=90&m6=90&m7=70&t1=1000`
+- **THEN** motion-playback is given the keyframe 70, 90, 90, 110, 110, 90, 90, 70 over 1000 ms, and the response `(m0, m1)=(70,90)` arrives within 1 second of the request, before the keyframe ends
 
 #### Scenario: Pages served during a keyframe
 - **WHEN** a client requests `GET /zero` while a 10000 ms `/online` keyframe plays
 - **THEN** the Zero check page is returned within 1 second
 
 #### Scenario: Missing joint
-- **WHEN** a client requests `/online` without `m5`
-- **THEN** the response is status 400, and no servo moves
+- **WHEN** servo output is `active`, and a client requests `/online` without `m5`
+- **THEN** the response is status 400, and no keyframe is passed to motion-playback
+
+#### Scenario: Duration out of range
+- **WHEN** servo output is `active`, and a client requests `/online` with all eight angles and `t1=60001`
+- **THEN** the response is status 400, and no keyframe is passed to motion-playback
 
 ### Requirement: Shared control with the remote
-The portal's robot-moving requests (`/controller` with `pm` or `servo`, and `/online`) SHALL be accepted while a remote's session is live, as drive-link's coexistence rule requires: requests from the portal and from the drive link both reach motion-playback and servo-output, and the most recent request wins. The portal SHALL NOT refuse a request because a remote is connected.
+The portal SHALL NOT refuse a robot-moving request (`/controller` with `pm` or `servo`, and `/online`) because a remote's session is live. While servo output is `active`, the portal's requests and the remote's both reach motion-playback and servo-output, and the most recent request wins by motion-playback's rules. While output is off, whether the portal may bring it back during a session is servo-output's rule ("Servo output modes").
 
 #### Scenario: Portal motion during a session
-- **WHEN** a remote's session is live with Standby as its last request, and a client requests `GET /controller?pm=13`
-- **THEN** the response is status 200 with the body `(pm)=(13)`, and the robot plays Dance 1
+- **WHEN** a remote's session is live, servo output is `active`, and a client requests `GET /controller?pm=13`
+- **THEN** the response is status 200 with the body `(pm)=(13)`, and motion-playback is asked for motion 13 (Dance 1)
 
-#### Scenario: Remote request after a portal request
-- **WHEN** the portal has started Push up during a live session, and the remote then requests a stop
-- **THEN** Push up stops, as drive-link and motion-playback define
+#### Scenario: Pages and calibration during a session
+- **WHEN** a remote's session is live, no motion is playing or pending, and a client requests `GET /setting`, then `GET /save?key=0&value=2`
+- **THEN** both responses have status 200, and servo-calibration is asked to store 2 for servo 0
 
-### Requirement: Safe state refuses movement
-While servo-output reports that servo output is in the safe state (entered on a fault or on link loss, as firmware-foundation and drive-link define), the portal SHALL refuse every robot-moving request: `/controller` with `pm` or `servo`, and `/online`. It SHALL answer them with status 503, content type `text/plain` and a body saying that servo output is in the safe state. This check SHALL come before parameter validation, so such a request gets 503 even when its parameters are missing or invalid. Nothing SHALL move as a result of a refused request, and the portal SHALL NOT leave the safe state or enable servo output by any request. Page requests, `/controller` with only `pms`, and `/save` SHALL still be served. Once servo-output reports that the safe state has ended, the portal SHALL accept robot-moving requests again.
+### Requirement: Servo output modes
+For every robot-moving request, the portal SHALL read servo-output's output mode (`idle`, `active`, `safe` or `fault`) and servo-output's report of whether an enable request with origin `portal` would be accepted now, as firmware-foundation defines them, and SHALL handle the request as follows, before parameter validation:
 
-#### Scenario: Link lost while the calibration page holds a servo
-- **WHEN** a remote's session lapses while servo 3 is held from the Zero check page, servo output enters the safe state, and a client then requests `GET /controller?servo=3&value=45`
-- **THEN** the response is status 503, and servo 3 receives no command
+| Mode | `pm` and `/online` | `servo` |
+|---|---|---|
+| `active` | passed on | passed on |
+| `idle` or `safe`, portal enable permitted | passed on | refused, 503 `servo output off` |
+| `idle` or `safe`, portal enable not permitted | refused, 409 `remote in control` | refused, 409 `remote in control` |
+| `fault` | refused, 503 `servo output fault` | refused, 503 `servo output fault` |
 
-#### Scenario: Incomplete request in the safe state
-- **WHEN** servo output is in the safe state and a client requests `GET /controller?servo=3` without `value`
-- **THEN** the response is status 503, not 400, and nothing moves
+Refusals SHALL have content type `text/plain`, and a refused request SHALL make no call to motion-playback or servo-output. A `pm` or `/online` request passed on in `idle` or `safe` is an explicit request; bringing servo output back for it is firmware-foundation's and motion-playback's rule, and the portal makes no other call for it. The portal SHALL NOT call servo-output's enable or safe-state request itself. Page requests, `/controller` with only `pms`, and `/save` SHALL be served in every mode.
 
-#### Scenario: Pages and calibration in the safe state
-- **WHEN** servo output is in the safe state and a client requests `GET /setting`, then `GET /save?key=0&value=2`
-- **THEN** both responses have status 200, and servo 0's trim is stored as 2
+#### Scenario: Servo command after link loss
+- **WHEN** a remote's session has lapsed while servo 3 was held, no session is live, servo output is in `safe`, and a client requests `GET /controller?servo=3&value=45`
+- **THEN** the response is status 503 with the body `servo output off`, and servo 3 receives no command
 
-#### Scenario: Safe state ends
-- **WHEN** servo-output reports that the safe state has ended, and a client then requests `GET /controller?pm=1`
-- **THEN** the response is status 200, and motion-playback is asked for Standby
+#### Scenario: Incomplete request while output is off
+- **WHEN** servo output is in `safe`, no session is live, and a client requests `GET /controller?servo=3` without `value`
+- **THEN** the response is status 503, not 400, and nothing is commanded
+
+#### Scenario: Motion request after link loss
+- **WHEN** the pak has left, its session has lapsed, servo output is in `safe`, portal enable is permitted, and a client requests `GET /controller?pm=1`
+- **THEN** the response is status 200 with the body `(pm)=(1)`, and motion-playback is asked for motion 1 (Standby)
+
+#### Scenario: Output off while a new session is live
+- **WHEN** servo output is in `safe`, a new session is live, portal enable is not permitted, and a client requests `GET /controller?pm=2`
+- **THEN** the response is status 409 with the body `remote in control`, and no motion is requested
+
+#### Scenario: Servo command before any motion
+- **WHEN** the robot has just booted, servo output is in `idle`, portal enable is permitted, and a client requests `GET /controller?servo=0&value=135`
+- **THEN** the response is status 503 with the body `servo output off`, and servo 0 receives no command
+
+#### Scenario: Calibration fault
+- **WHEN** servo output is in `fault`, and a client requests `GET /controller?pm=2`, then `GET /setting`
+- **THEN** the first response is status 503 with the body `servo output fault` and no motion is requested, and the second is status 200
