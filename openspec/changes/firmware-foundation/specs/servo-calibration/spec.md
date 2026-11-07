@@ -17,7 +17,7 @@ The firmware SHALL hold one calibration trim for each of the eight servo indices
 
 ### Requirement: Trims apply to every output
 
-A servo's output angle SHALL be its commanded angle plus its trim, then limited to its safe range (servo-output). This SHALL apply to every source of commanded angles, including motions, direct servo control, the zero check, motion-editor keyframes and the drive link. The commanded angle that servo-output reports SHALL exclude the trim. When the trim of a driven servo changes, the servo SHALL move to its commanded angle plus the new trim, within its safe range, within 40 ms and without a new command.
+A servo's output angle SHALL be its commanded angle plus its trim, then limited to its safe range (servo-output). This SHALL apply to every source of commanded angles, including motions, direct servo control, the zero check, `/online` keyframes and the drive link. The commanded angle that servo-output reports SHALL exclude the trim. When the trim of a driven servo changes, the servo SHALL move to its commanded angle plus the new trim, within its safe range, within 40 ms and without a new command.
 
 #### Scenario: Trim applied
 
@@ -113,5 +113,5 @@ A power failure during a sector write cannot be detected in this format. The sec
 
 #### Scenario: Fault cleared by setting the trim
 
-- **WHEN** the firmware is in `fault` because of servo 2's trim, and servo 2's trim is set to 0
-- **THEN** the console shows `calibration ok` with the new table, the mode changes to `safe`, and a following enable request is accepted
+- **WHEN** the firmware is in `fault` because of servo 2's trim, no drive-link session is live, and servo 2's trim is set to 0
+- **THEN** the console shows `calibration ok` with the new table, the mode changes to `safe`, and a following enable request that servo-output's enable rule allows (here origin `portal`) is accepted

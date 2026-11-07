@@ -62,7 +62,7 @@ The firmware SHALL NOT drive any servo before these lines are printed. The stock
 
 The firmware SHALL run as one cooperative main loop. Each service SHALL be a poll function that `main.cpp` calls on every pass with the current `millis()` time. Services include servo output, calibration, and the services that later changes add (link receive and failsafe, keyframe player, web server). A service SHALL do only the work that is due, and SHALL time its periodic work by advancing its deadline by its interval, not by the time it ran. No service SHALL call `delay()` or wait for a condition. `loop()` SHALL return to the core after every pass so that the Wi-Fi stack runs.
 
-The loop budget SHALL be: every pass, with all services together, takes at most 20 ms. The only exception SHALL be a pass that commits calibration to flash (servo-calibration). The firmware SHALL record the longest pass since start-up, the number of passes over 20 ms that did not commit calibration, and the longest calibration-commit pass, and SHALL make these available to the rest of the firmware.
+The loop budget SHALL be: every pass, with all services together, takes at most 20 ms. The only exception SHALL be a pass that commits calibration to flash (servo-calibration). The firmware SHALL record the longest pass since start-up, the number of passes over 20 ms that did not commit calibration, and the longest calibration-commit pass, and SHALL make these available to the rest of the firmware. Each 40 ms deadline of servo-output and servo-calibration SHALL be extended by the length of any calibration-commit pass that runs within it; no other pass extends it.
 
 #### Scenario: Release within the budget
 

@@ -21,13 +21,13 @@
 ## Goals / Non-Goals
 
 **Goals:**
-- One PlatformIO project that later changes extend by adding sources to `firmware/src/` and `core/`, tests to `core/test/` and loop services to `main.cpp`, without touching the build configuration.
+- One PlatformIO project that later changes extend by adding sources to `firmware/src/` and `core/`, tests to `core/test/`, loop services to `main.cpp`, and, where they need them, their own envs and `pre:` extra scripts, without changing the library link, the source filter or the warning settings.
 - Every rule in servo-output and servo-calibration that does not need hardware is tested on the host.
 - The firmware has a single output gate: one owner for "may the servos move", an overriding safe state, and no movement at boot.
 - Flash writes are deliberate. One task writes the application and one writes stock back. Nothing writes the calibration or SDK sectors by accident.
 
 **Non-Goals:**
-- Motions, the standby pose, the access point, the web portal and the drive link. They belong to motion-playback, drive-link and web-portal. This change also does not decide when the link is lost, or which caller may enable output.
+- Motions, the standby pose, the access point, the web portal and the drive link. They belong to motion-playback, drive-link and web-portal. This change also does not decide when the link is lost; it does decide when output may be enabled again (D5).
 - Any user-facing way to set calibration. The web portal provides `/setting` and `/save`.
 - Battery or supply monitoring: stock has no battery sensing, so none exists.
 - Over-the-air updates, a filesystem, static analysis (clang-format, clang-tidy) and sanitised host tests. Sanitisers need runtimes that this host lacks, and they can be added later without changing these specs.
@@ -109,7 +109,7 @@ sequenceDiagram
 
 - **Service shape:** each service is `void poll(uint32_t nowMs)` and does only due work. Periodic work keeps `next += interval` (catching up at most one interval when late, so a stall does not cause a burst), not `next = now + interval`. Later changes add their poll calls in `main.cpp`. The order of the calls is their concern; this change fixes only the rules and the budget.
 - **Budget:** 20 ms per pass for all services together. That allows a 50 Hz servo period to be met, and it leaves the drive link's receive and failsafe check at least one look per 20 ms.
-- **Commit exception:** `EEPROM.commit()` erases and programs a flash sector and blocks for tens of milliseconds (inferred: typical sector erase time of the robot's flash chip; task 6.5 measures it). It is the one allowed exception. It happens only when a trim actually changes, so never during a motion unless someone calibrates while one plays.
+- **Commit exception:** `EEPROM.commit()` erases and programs a flash sector and blocks for tens of milliseconds (inferred: typical sector erase time of the robot's flash chip; task 6.5 measures it). It is the one allowed exception. It happens only when a trim actually changes, so never during a motion unless someone calibrates while one plays. The 40 ms output deadlines are extended by a commit pass that falls within them (firmware-build); task 6.5 measures how long that is.
 - **Statistics:** `core/system/loop_stats` is pure arithmetic (longest pass, the over-budget count that excludes commit passes, the longest commit pass) with a host test. `main.cpp` measures each pass with `micros()`.
 - **Serial:** diagnostic lines are short (under 64 bytes) and printed only on events (start-up, a mode change, a calibration change), so they fit the UART FIFO and do not block a pass.
 
@@ -121,7 +121,8 @@ sequenceDiagram
   participant Gate as core OutputGate
   participant Bank as core ServoBank
   participant Drv as servo_driver (waveform API)
-  Caller->>Gate: enable(pose)
+  Caller->>Gate: enable(origin, pose)
+  Gate->>Gate: origin allowed? (session state from drive-link)
   Gate->>Bank: setPose(pose), mode = active
   Gate-->>Caller: token
   Caller->>Gate: setServo(token, i, angle)
@@ -140,7 +141,10 @@ sequenceDiagram
   - The mode state machine of servo-output: `idle`, `active`, `safe` and `fault`.
   - The writer token: a 32-bit counter, incremented on every entry into `safe` or `fault`. A pose or servo command is accepted only when the mode is `active` and the caller's token equals the counter.
   - **Why a token:** a motion that was running when the safe state was entered cannot continue after another caller re-enables output, because its token is stale. The gate enforces this; it does not rely on every caller's discipline.
-  - `enterSafe` is synchronous: it releases every servo in the model in the same call. The driver turns that into pin changes within 40 ms.
+  - `enterSafe` is synchronous: it releases every servo in the model in the same call. The driver turns that into pin changes within 40 ms. The gate then calls its mode listeners before returning; the firmware registers one that calls motion-playback's stop.
+  - **Enable rule:** `enable(origin, pose)` with `origin` one of `link`, `portal`, `check`. The gate keeps two facts from drive-link: whether a session is live, and whether the live session started after the last disable. drive-link calls `linkSessionStarted()` and `linkSessionEnded()`; every entry into `safe` or `fault` clears the "started after" fact. In `idle` or `safe`, `link` is allowed only with a live session that started after the disable, and `portal` and `check` only with no live session. `enablePermitted(origin)` answers the same question without enabling, so that the web portal can refuse a request before it reaches the player.
+  - **Why this rule:** it is the settled product decision. After a link loss the pak's old session is over, so a new session's first motion request, or the portal once nobody drives, brings output back. Only an explicit motion or keyframe request reaches `enable`, through motion-playback's enable handshake, so a stop, a session start or a direct servo command never re-enables output.
+  - **Origin of a request:** the firmware binding of motion-playback's servo interface records the origin of each motion or keyframe request it forwards to the player, and passes the origin of the request whose first tick enables output.
 - **`firmware/src/servo_driver`:** drives the pins with the core's waveform generator (`startWaveform` and `stopWaveform` from `core_esp8266_waveform.h`), which is what the core's `Servo` class uses underneath. It does not use `Servo` objects, for two reasons:
   - `Servo::detach()` blocks for 20 ms (`delay(REFRESH_INTERVAL)` in core 2.7.4 and 3.1.2). Eight detaches would block for 160 ms, which breaks the loop budget and delays the failsafe.
   - The model owns the mapping and its rounding, so the host tests cover them. `Servo::write` would remap.
@@ -178,7 +182,7 @@ sequenceDiagram
   - `trim i v`, `trimreset`;
   - `status`;
   - `restart`, `hang`.
-- **Parser:** `core/check/console_parse` is pure parsing into a command value, with a host test for every command and for malformed input. The console keeps the token it gets from `enable` and passes it on, as any caller would.
+- **Parser:** `core/check/console_parse` is pure parsing into a command value, with a host test for every command and for malformed input. The console's `enable` uses origin `check`, keeps the token it gets and passes it on, as any caller would. The check build plays no motions, so its `enable` stands in for the motion request.
 - **`hang`:** busy-waits without yielding, so the software watchdog resets the chip. This tests the reset-cause line.
 - **Why a console, not compile-time scenarios** (the previous draft's `robot-calcheck`): the joint and direction check needs servos driven one at a time on demand, and the gate checks need commands in a chosen order. A console does both without moving anything at boot.
 
@@ -198,30 +202,34 @@ flowchart TD
 
 ## Cross-change assumptions
 
+These are what the other changes own. This change relies on them and does not specify them.
+
 - **motion-playback:**
-  - It never moves the robot at boot. Its first output after `idle` or `safe` is `enable(complete pose)`, made in direct response to a new motion request, and it uses the returned token for every later pose or servo command.
-  - It stops the running motion when a command is rejected or the reported mode is not `active`.
-  - It never calls `enable` from a motion that is already running.
-  - Its keyframe stepping is a poll service within the loop budget.
-  - It takes keyframe data in commanded angles; the trims and the safe ranges are applied here.
+  - It never moves the robot at boot. When the first tick of a motion or keyframe is due and output is not enabled, it gives one complete pose (its enable handshake, which uses the zero pose), and it uses the returned token for every later pose or servo command. That handshake is the only path to `enable` in the normal build.
+  - Its firmware binding passes the origin (`link` or `portal`) of the request whose first tick makes that handshake.
+  - It ends the running motion when a command is rejected, and its stop is called by the mode listener when output enters `safe` or `fault`.
+  - Its ticks are a poll service within the loop budget.
+  - It passes table angles as commanded angles (0–180°); the trims and the safe ranges are applied here.
   - Its motion checks run after task 6.3 and with the legs off the ground.
 - **drive-link:**
-  - It calls `enterSafe(link-loss)` when command frames stop; an undecodable frame does not count as a fresh frame.
-  - It reads the mode, the safe reason and the commanded angles (without trims) from the state report for its telemetry.
-  - Its receive and failsafe check is a poll service, and it reads a UDP packet only when it is complete.
+  - It calls `enterSafe(link-loss)` when a session ends (a lapse or a sequence jump), in the same pass and before the player's next tick, and never calls `enable` or leaves `safe` itself.
+  - It calls `linkSessionStarted()` when a session starts and `linkSessionEnded()` when it ends, which is the session state that the enable rule uses. It reports whether a session is live, as its spec says.
+  - It reads the mode, the safe reason and the commanded angles (without trims), or that a servo is released or not yet commanded, from the state report for its telemetry.
+  - Its receive and failsafe check is a poll service, called before the player in each pass.
   - Its timing can count on the 20 ms pass budget, except for a pass that commits calibration. Task 6.5 records how long that pass takes.
-  - It puts fuzz targets and their driver under `core/fuzz/<name>/`, which neither env compiles, and builds them itself.
-  - It decides which of its frames may call `enable`. It runs its link-loss tests with servos attached and output gated before motion-playback's motion checks.
-  - Its access point setup may write the SDK data sector; `mise run restore` returns it to stock.
+  - It keeps its fuzz executables outside the library (it uses `fuzz/drive_link/` at the repository root) and builds them itself.
+  - It runs its link-loss tests with servos attached and output gated before motion-playback's motion checks.
+  - It starts the access point with Wi-Fi persistence off, so it stores nothing in the SDK data sector; `mise run restore` returns that sector to stock in any case.
 - **web-portal:**
   - It maps `/save?key=<i>&value=<v>` with `i` in 0–7 to "set trim" with the range −124…+124, and `key=100` to "reset all trims".
   - It fills `/setting` from the trim table, including −1 for an erased byte.
-  - It sends direct servo control, the zero check and `/online` keyframes through the output gate. When the mode is not `active`, it decides which complete pose to enable with, or to refuse.
-  - It relies on the safe-range clamp and does not add its own.
-  - It keeps serving `/setting` and `/save` in `fault`, so that a damaged trim can be repaired.
+  - It sends motion requests and `/online` keyframes to motion-playback, whose handshake enables output with origin `portal`. Before forwarding a robot-moving request while output is not `active`, it asks `enablePermitted(portal)` and refuses the request when that is false.
+  - It sends direct servo commands (`/controller?servo=`, including the Zero check page's per-servo buttons) to servo-output, which rejects them unless the mode is `active` (Open questions). The Zero position button requests motion 100 through motion-playback, so it can enable output like any motion request.
+  - It validates angles against the accepted range 0–180° and relies on the safe-range clamp, adding none of its own.
+  - It keeps serving `/setting` and `/save` in `safe` and `fault`, so that a damaged trim can be repaired.
   - It labels channels with the GPIO map 15, 13, 12, 14, 2, 4, 5, 16.
-- **handheld-pak:** any GPIO label it shows uses the same map.
-- **Every later change** adds its hardware-free code to `core/` (executables under `core/fuzz/`), its tests to `core/test/`, and its hardware code and poll call to `firmware/src/`, without editing the `lib_deps`, `lib_ldf_mode`, `srcFilter` or warning settings.
+- **handheld-pak:** any GPIO label it shows uses the same map. It relies on the enable rule only through drive-link: after a link loss, its new session's first motion request brings output back.
+- **Every later change** adds its hardware-free code to `core/`, its tests to `core/test/`, and its hardware code and poll call to `firmware/src/`. It may add its own env or `pre:` extra script, but does not edit the `lib_deps`, `lib_ldf_mode`, `srcFilter` or warning settings. Executables with their own entry point live under `core/fuzz/<name>/` or outside `core/`.
 
 ## Risks / Trade-offs
 
@@ -245,3 +253,4 @@ flowchart TD
 - Which joint each servo index drives, in which direction, and where its mechanical stops are. Unknown until task 6.3 and task 6.4.
 - How long `EEPROM.commit()` blocks on this chip, and whether servo pulses stay intact during it. Measured in task 6.5.
 - Whether the pinned core's waveform generator applies a timing change at the period boundary. Checked in task 1.1.
+- **Direct servo control before a motion (product decision, for the user):** stock attaches every servo at boot in the zero pose, so its zero check and direct servo control work at once. Here output comes back only with an explicit motion request (the settled rule), so after a reset or a safe state the Zero check page's per-servo buttons and the other direct servo commands are rejected until a motion (for example Zero position, motion 100) has been requested. Whether a direct servo command may also enable output, and with which complete pose, is not settled by stock or by the settled decisions.

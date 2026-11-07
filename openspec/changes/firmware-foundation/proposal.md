@@ -18,7 +18,7 @@ So far the repository has only the stock image in `baseline/`, its analysis (`ba
   - a per-servo safe range, applied after the trim;
   - boot-safe use of the strapping pins (GPIO15 is servo 0, GPIO2 is servo 4);
   - non-blocking release.
-- An output mode state machine with an overriding safe state. The robot boots still. Output is enabled only by an explicit request that carries a complete pose. Any mode can enter the safe state, which releases every servo and invalidates every earlier writer until output is enabled again.
+- An output mode state machine with an overriding safe state. The robot boots still. Output is enabled only on behalf of an explicit motion or keyframe request, with a complete pose. After a reset or a safe state, that request must come from a drive-link session that started after output was disabled, or from the web portal while no session is live. Any mode can enter the safe state, which releases every servo and invalidates every earlier writer until output is enabled again.
 - Servo calibration in the stock format: one signed trim byte per servo in EEPROM bytes 0–7 of the 512-byte emulation sector, with an erased byte reading as −1 and the stock accepted range −124…+124. A trim is set per servo, all trims are reset together, and the trims are kept across restarts, uploads and a return to stock. A damaged trim byte puts the firmware into a reported fault mode with output disabled.
 - A documented first-flash procedure (backup, then upload) and the return to stock (`mise run restore`), plus a hardware check with the legs off the ground that records each servo index's joint, direction and mechanical range.
 
@@ -32,6 +32,7 @@ So far the repository has only the stock image in `baseline/`, its analysis (`ba
   - the pulse mapping;
   - the per-servo safe range;
   - the output modes and the safe state;
+  - when output may be enabled again;
   - the strapping pins;
   - release;
   - the reported servo state.

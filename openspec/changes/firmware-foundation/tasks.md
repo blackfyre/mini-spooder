@@ -26,24 +26,27 @@ Every step that writes to the robot's flash or resets it (`mise run backup`, `mi
 
 ## 3. Servo model, safe ranges and output gate in core
 
-- [ ] 3.1 Implement `core/servo/pulse` (D5): the stock conversion and the per-servo safe ranges with the spec's defaults. Generate `core/test/fixtures/stock_keyframes.h` once from the stock rows of `docs/lafvin-motions.md`, plus the zero pose 135, 45, 135, 45, 45, 135, 45, 135, and commit it. Verify with `core/test/test_pulse/`:
+- [ ] 3.1 Implement `core/servo/pulse` (D5): the stock conversion, the default safe ranges of the spec (`kDefaultSafeRange`) and the table in force (`kSafeRange`, equal to the defaults until task 6.4). Commit `core/test/fixtures/expected_limited.h`, the list of stock keyframe angles that `kSafeRange` limits, empty while it equals the defaults. Generate `core/test/fixtures/stock_keyframes.h` once from the stock rows of `docs/lafvin-motions.md`, plus the zero pose 135, 45, 135, 45, 45, 135, 45, 135, and commit it. Verify with `core/test/test_pulse/`:
   - 1° → 400 µs, 90° → 1394 µs, 85° → 1338 µs, 94° → 1439 µs, 160° → 2176 µs, 180° → 2400 µs;
   - servo 3 at a commanded 158° with trim +5 → 160°;
   - servo 1 at a commanded 0° with trim −1 → 35°;
   - every range satisfies `1 ≤ low < high ≤ 180`;
-  - no stock keyframe angle, nor any zero-pose angle, is limited with trims −1 and 0.
-- [ ] 3.2 Implement `core/servo/servo_bank` (D5): servo indices 0–7, complete pose, single-servo command, commanded angle limited to 0–180°, release of one or all, the trim applied before the safe range, and the state report. Verify with `core/test/test_servo_bank/`:
+  - no stock keyframe angle, nor any zero-pose angle, is limited by `kDefaultSafeRange` with trims −1 and 0;
+  - the stock keyframe angles that `kSafeRange` limits with trims −1 and 0 are exactly those in `expected_limited.h`.
+- [ ] 3.2 Implement `core/servo/servo_bank` (D5): servo indices 0–7, complete pose, single-servo command, commanded angles accepted only within 0–180°, release of one or all, the trim applied before the safe range, and the state report. Verify with `core/test/test_servo_bank/`:
   - index 8 rejected;
-  - 200° reported as 180°;
+  - a servo command at 181° and a pose with −1° rejected, with no output or report changed;
   - a report after a pose with servo 2 released;
   - release all;
   - resume after release;
   - releasing a released servo changes nothing;
   - a trim change on a driven servo changes its width with no new command (servo 6, trim +4 → 1439 µs), with the commanded angle still reported as 90°.
-- [ ] 3.3 Implement `core/servo/output_gate` (D5): the four modes, the transitions of the servo-output state diagram, the writer token, the safe-state reasons and the mode-line text. Verify with `core/test/test_output_gate/`:
+- [ ] 3.3 Implement `core/servo/output_gate` (D5): the four modes, the transitions of the servo-output state diagram, the writer token, the safe-state reasons, the enable rule by origin, `enablePermitted`, the mode listeners and the mode-line text. Verify with `core/test/test_output_gate/`:
   - `idle` after construction with valid trims, and `fault` with an invalid trim;
   - a single servo or a pose in `idle` rejected;
-  - enable in `idle` → `active` with every servo driven at the pose;
+  - enable with origin `portal` in `idle` and no session → `active` with every servo driven at the pose;
+  - after `enterSafe(link-loss)`: `portal` accepted with no session; `portal` rejected while a session is live; `link` accepted once a session starts after the safe state; `link` rejected for a session that started before it; `enablePermitted` agrees with each case;
+  - every mode change calls the registered listeners before the call returns;
   - `enterSafe(link-loss)` from `active` releases all servos, sets the reason and makes the token stale;
   - a pose with the stale token rejected after a second caller re-enables;
   - `enterSafe` in `idle` → `safe`;
@@ -82,14 +85,14 @@ Every step that writes to the robot's flash or resets it (`mise run backup`, `mi
   - Switch the robot off and on 10 times, and verify that the banner and `reset power-on` appear each time.
 - [ ] 6.2 Flash the `robot-check` build (`pio run -d firmware -e robot-check -t upload --upload-port "$ROBOT_PORT"`), robot on a stand. Verify each step in turn:
   1. `servo 0 80` before any enable is rejected and every servo stays limp.
-  2. `enable 70 90 90 110 110 90 90 70` gives `mode active enable`, and all eight servos stiffen, including those on GPIO15, GPIO2 and GPIO16.
+  2. `enable 70 90 90 110 110 90 90 70` gives `mode active check`, and all eight servos stiffen, including those on GPIO15, GPIO2 and GPIO16.
   3. `safe` gives `mode safe check`, and every servo goes limp. With a logic analyser, every pin is low with no pulses within 40 ms; before the `safe`, record the pulse width on GPIO13 at a commanded 90° (expected 1383 µs: 90° with the erased trim −1 is 89°).
   4. `servo 0 80` is then rejected.
   5. A new `enable` stiffens all servos again.
   6. `release all` followed by `status` shows the over-budget count unchanged and a longest pass under 20 ms.
   7. `hang` resets the chip, and the next start-up shows `reset software-watchdog` with `exccause` and `epc1`.
 - [ ] 6.3 Joint and direction check, check build, legs off the ground. Enable with the standby pose 70, 90, 90, 110, 110, 90, 90, 70. For each index 0–7 in turn, command `servo i <standby + 15>` and then back to standby, and verify that exactly one joint moves. Record, for each index, its GPIO, the leg (front or rear, left or right), the joint (hip or knee), and the direction of increasing angle in `docs/servo-joints.md`. Update the Hardware section of `CLAUDE.md` to point to it. Verify by repeating the sequence once and checking each row of the document against what moves.
-- [ ] 6.4 Mechanical stops, check build, legs off the ground. For each index, step `servo i a` in 5° steps from standby towards each end of its default safe range. Stop at the first contact or binding, and record the last free angle in `docs/servo-joints.md`. Where a measured limit is narrower than the default, set it in `core/servo/pulse`'s table. Where the measured limit falls inside the stock envelope, record that in the document and in design D5. Rerun `mise run test` (the envelope test then names any stock keyframe that is limited) and reflash the check build. Verify that commanding each servo 10° beyond its range holds it at the limit with no contact.
+- [ ] 6.4 Mechanical stops, check build, legs off the ground. Run `trimreset` first, so that every trim is 0 and each commanded angle is the output angle. For each index, step `servo i a` in 5° steps from standby towards each end of its default safe range. Stop at the first contact or binding, and record the last free angle in `docs/servo-joints.md`. Where a measured limit is narrower than the default, set it in `kSafeRange`, leaving `kDefaultSafeRange` unchanged. Where the measured limit falls inside the stock envelope, record the affected stock keyframes in `expected_limited.h`, in the document and in design D5. Rerun `mise run test` and reflash the check build. Verify that commanding each servo 10° beyond its range holds it at the limit with no contact.
 - [ ] 6.5 Calibration, check build, robot on a stand.
   1. `trim 4 -7`: verify that servo 4 visibly moves by about 7° while driven, with no other servo moving.
   2. `trimreset`, then `trim 0 -3`, `trim 4 -7` and `trim 7 12`. Read the sector with `mise exec -- sh -c 'esptool --port "$ROBOT_PORT" read-flash 0x3FB000 8 build/cal.bin'`, and verify that `cmp build/cal.bin core/test/fixtures/trims_example.bin` finds no difference.
