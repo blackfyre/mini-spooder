@@ -11,6 +11,8 @@
 #include "drive_link.h"  // drive-link: access point, UDP drive port, session report
 // web-portal: the HTTP portal on port 80.
 #include "portal.h"
+// Diagnostic trace, robot-trace env only (station joins and leaves, heartbeat).
+#include "trace.h"
 #include "servo/output_gate.h"
 #include "servo/servo_bank.h"
 #include "servo_driver.h"
@@ -83,6 +85,7 @@ void setup() {
   drive_link_glue::begin(outputGate);
   // web-portal: start the HTTP server (after the output gate exists).
   portal::begin(outputGate, calibration);
+  trace::begin(outputGate, loopStats);  // no-op outside the robot-trace env
 
   diag::flush();
 }
@@ -109,6 +112,7 @@ void loop() {
   // the player's state after this pass's tick.
   drive_link_glue::sendTelemetry();
 
+  trace::poll(nowMs);  // no-op outside the robot-trace env
   driver.poll(nowMs);  // after the services, so their commands reach the pins this pass
   diag::poll();
 
