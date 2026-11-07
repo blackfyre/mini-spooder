@@ -7,6 +7,7 @@
 
 #include "calibration_store.h"
 #include "diag.h"
+#include "drive_link.h"  // drive-link: access point, UDP drive port, session report
 #include "servo/output_gate.h"
 #include "servo/servo_bank.h"
 #include "servo_driver.h"
@@ -71,6 +72,10 @@ void setup() {
 #ifdef MINI_SPOODER_CHECK_CONSOLE
   console.begin(outputGate, calibration, loopStats);
 #endif
+
+  // drive-link: the access point and the drive port (no output change).
+  drive_link_glue::begin(outputGate);
+
   diag::flush();
 }
 
@@ -78,10 +83,18 @@ void loop() {
   const uint32_t startUs = micros();
   const uint32_t nowMs = millis();
 
+  // drive-link's receive and failsafe step: before motion playback's step, so a
+  // request, stop or failsafe found in this pass applies before the player moves.
+  drive_link_glue::receive();
+
   // Later changes add their poll services here (design D4).
 #ifdef MINI_SPOODER_CHECK_CONSOLE
   console.poll(nowMs);
 #endif
+  // drive-link's telemetry step: after motion playback's step, so a frame reports
+  // the player's state after this pass's tick.
+  drive_link_glue::sendTelemetry();
+
   driver.poll(nowMs);  // after the services, so their commands reach the pins this pass
   diag::poll();
 
