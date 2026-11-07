@@ -69,3 +69,7 @@ Then:
 ## Status
 
 Tested on the robot: the portal, Standby and walking, driving from the TrimUI, stopping with B, leaving, and the portal lock. The other motions are host-tested against the stock tables but not yet watched on the robot. The robot checks still open in `openspec/changes/*/tasks.md` are the joint and direction map, the mechanical stops, calibration on the robot, comparing motions against stock, and timing the link-loss failsafe.
+
+## Licence
+
+This project's own code is MIT-licensed ([LICENSE](LICENSE)). The stock flash image, the motion tables extracted from it and the vendor keyframes are not covered: their owners have not stated a licence.
