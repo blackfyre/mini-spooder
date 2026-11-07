@@ -96,6 +96,7 @@ These are the first powered checks of the new firmware with servos connected. Th
   - Verify that `mise run monitor` shows `mini-spooder <version>`, `reset external` and `calibration ok -1 -1 -1 -1 -1 -1 -1 -1` after an esptool reset.
   - Verify that every servo can be turned freely by hand for 10 s after start-up (boot still). If a logic analyser is available, verify that no servo pin carries a pulse.
   - Switch the robot off and on 10 times, and verify that the banner and `reset power-on` appear each time.
+  - Result (2026-11-07, commit 1587614): no difference in 0x3FB000–0x3FFFFF; after an esptool reset the console showed `mini-spooder 56fefe5-dirty`, `reset external`, `calibration ok -1 -1 -1 -1 -1 -1 -1 -1`; the user confirmed every servo limp after start-up and power-cycled the robot a couple of times (the user judged 10 unnecessary). Still open: `reset power-on` on the console after a power cycle was not captured.
 - [ ] 6.2 Flash the `robot-check` build (`pio run -d firmware -e robot-check -t upload --upload-port "$ROBOT_PORT"`), robot on a stand. Verify each step in turn:
   1. `servo 0 80` before any enable is rejected and every servo stays limp.
   2. `enable 70 90 90 110 110 90 90 70` gives `mode active check`, and all eight servos stiffen, including those on GPIO15, GPIO2 and GPIO16.
