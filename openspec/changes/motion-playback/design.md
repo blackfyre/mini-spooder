@@ -16,7 +16,7 @@ See proposal.md for the motivation. The requirements are in `specs/motion-playba
 | The stock setup runs the zero routine at boot | ROM 0x40201FD8 | Found in the disassembly; not reproduced (D7) |
 | The keyframe loop: `floor(T / 10)` steps from index 0; each step writes an interpolated angle only to servos whose angle changes, then `delay(10)`; the keyframe angle itself is never written, but the cached pose becomes the keyframe | flash 0x1420–0x14FE | Verified; the shortfall is a stock defect, not reproduced (D3) |
 | The keyframe loop does not call the web server, so stock motions block every request until they end | flash 0x1420–0x14FE | Verified |
-| `/online` reads `m0`–`m7` and `t1` and calls the same runner with one keyframe; the motion editor uses it | flash 0x3920–0x3B03 | Verified |
+| `/online` reads `m0`–`m7` and `t1` and calls the same runner with one keyframe; no stock page sends it | flash 0x3920–0x3B03 | Verified (baseline/README.md) |
 | The servo write adds a signed EEPROM byte at the servo's index, then maps 1–180° to 400–2400 µs | flash 0x1304–0x132E | Verified |
 | Unknown `pm` values are accepted and ignored; `pms` is never handled | flash 0x3814–0x38F4, dispatch 0x5084–0x51E3 | Verified |
 
@@ -87,33 +87,32 @@ Stock interpolates from tick index 0 and never writes the keyframe angle, so a s
 ```mermaid
 stateDiagram-v2
     [*] --> Idle: reset (nothing written)
-    Idle --> Enabling: request, keyframe or standby, output not enabled
-    Idle --> Playing: request, keyframe or standby, output enabled
-    Enabling --> Playing: complete zero pose accepted
-    Enabling --> Idle: pose refused
-    Playing --> Playing: ends, request pending
+    Idle --> Enabling: request or keyframe, output not active
+    Idle --> Playing: request or keyframe, output active (enable with commanded angles, same tick)
+    Enabling --> Playing: enable with the zero pose accepted
+    Enabling --> Idle: enable request refused
+    Playing --> Playing: ends, request or keyframe pending
     Playing --> Idle: ends, nothing pending
-    Playing --> Idle: stop, or a write refused
-    Playing --> Playing: keyframe or return to standby (replaces)
+    Playing --> Idle: stop, mode not active, or a write refused
 ```
 
-The firmware's loop calls `service(now_ms)` on every pass, after the drive link's receive and failsafe step. `service` runs at most one tick when one is due. After a tick due at `D` runs at `t`, the next tick is due at `D + 10` when `t < D + 10`, otherwise at `t + 10`: the schedule advances by the interval, so jitter under one tick does not accumulate, while a stall of a tick or more lengthens the motion by the stall and never produces a burst of catch-up writes. Requests (`request(id)`, `play_keyframe(...)`, `stop()`, `return_to_standby()`) only set state. All callers (the web server's handlers, the UDP link and the safe-state hook) run on the Arduino loop's single thread, so the player needs no locking.
+The firmware's loop calls `service(now_ms)` on every pass, after the drive link's receive and failsafe step (drive-link's ordering rule, see Cross-change assumptions). `service` runs at most one tick when one is due. After a tick due at `D` runs at `t`, the next tick is due at `D + 10` when `t < D + 10`, otherwise at `t + 10`: the schedule advances by the interval, so jitter under one tick does not accumulate, while a stall of a tick or more lengthens the motion by the stall and never produces a burst of catch-up writes. Requests (`request(id)`, `play_keyframe(...)`, `stop()`) only set state and answer at once. All callers (the web server's handlers and the UDP link) run on the Arduino loop's single thread, so the player needs no locking.
 
-The player writes through an interface to servo output: `write(servo_index, angle_deg) -> bool`, `write_pose(angles[8]) -> bool`, `output_enabled()` and `commanded_angle(servo_index)`. The firmware implements it with `servo-output`. The host tests implement it with a recording model that logs `(tick, servo, angle)`, keeps commanded angles and can be told to refuse writes.
+The player writes through an interface to servo output: `enable(angles[8]) -> bool`, `write(servo_index, angle_deg) -> bool`, `active()` and `commanded_angle(servo_index)`. The firmware implements it with `servo-output`'s gate: the glue keeps the writer token that an accepted enable request returns and passes it with every write, so the player sees only accepted or refused. The host tests implement it with a recording model that logs `(tick, servo, angle)` and enable requests, keeps commanded angles and a mode, and can be told to refuse an enable request or a write.
 
 - *Alternative: keep the stock blocking loop and call the web server from inside it, as the vendor's later version does.* Rejected: it nests request handling inside motion code, and a request handled there can start another motion re-entrantly.
 
 ### D5. One pending request; the latest request wins
 
-Stock blocks during a motion, so HTTP requests that arrive during a motion are handled one by one afterwards. The new player keeps one pending slot, and the last request replaces any earlier one. Without this, a remote that sends its desired state every period would queue a long backlog of motions. Re-requesting the playing motion queues one more run of it, which is how a held "forward" can keep walking (the drive link decides when to re-request).
+Stock blocks during a motion, so HTTP requests that arrive during a motion are handled one by one afterwards. The new player keeps one pending slot, and the last request replaces any earlier one. Without this, a remote that sends its desired state every period would queue a long backlog of motions. Re-requesting the playing motion queues one more run of it. The player plays every request once, as stock does, and never repeats a motion by itself; repetition while a control is held is the pak's (Cross-change assumptions). A single keyframe takes the same pending slot as a motion (D10).
 
-### D6. Stop, return to standby and one current pose
+### D6. Stop and one current pose
 
-Both commands are new: stock has neither. Stop ends the motion before its next tick and holds the last angles written. Return to standby does the same and then plays motion 1. The player keeps no pose of its own: every keyframe and direct pose starts from servo output's commanded angles. A direct servo command from the portal, a stop part-way through a keyframe and an exact keyframe end therefore all leave the one pose that the next motion starts from, and the telemetry reports the same angles that the servos were commanded to.
+Stop is new: stock has none, because it serves no request while a motion plays. Stop ends the motion before its next tick, discards the pending request and holds the last angles written. A return to Standby is a request for motion 1, as the stock Standby button is; no separate command exists, because no caller needs one. The player keeps no pose of its own: every keyframe and direct pose starts from servo output's commanded angles. A direct servo command from the portal, a stop part-way through a keyframe and an exact keyframe end therefore all leave the one pose that the next motion starts from, and the telemetry reports the same angles that the servos were commanded to.
 
 ### D7. Still at boot
 
-Stock runs the zero routine in its setup. The new firmware does not move at boot: the player writes nothing until its first command. A reset during walking (for example a brown-out) then leaves the robot limp instead of jumping to the zero pose. The zero pose is still where a session starts (D11).
+Stock runs the zero routine in its setup. The new firmware does not move at boot: the player writes nothing until its first command. A reset during walking (for example a brown-out) then leaves the robot limp instead of jumping to the zero pose. The zero pose is still where the first motion starts (D11).
 
 ### D8. `pms`, unknown ids and `pm` 99
 
@@ -123,15 +122,20 @@ Stock runs the zero routine in its setup. The new firmware does not move at boot
 
 ### D9. On-robot verification through a demonstration build
 
-A PlatformIO env, `motion-demo`, builds the normal firmware with `-DMOTION_DEMO`. The demo moves nothing until the line `go` arrives on the serial console (boot still, D7), so the robot can be lifted first. It then plays motions 1–15, 99 and 100 in turn, with a 2 s pause between them, and then runs two interruption scripts: stop Forward 500 ms after it starts, then return to standby 1 s into Dance 1, and finally one 500 ms keyframe. It logs one line per motion, `motion <id> start <ms> last_write <ms> end <ms> ticks <n> <complete|interrupted>`, one line per interruption command, `command <stop|standby> <ms>`, and one line for the keyframe, `keyframe start <ms> end <ms> ticks <n>`, at the console baud rate that `firmware-build` sets. `tools/check_motion_log.py` compares the logged ticks and durations with the generated tables. This gives a deterministic check of on-robot timing without adding a command console to the shipped firmware. The visual match with stock is judged from video of both firmwares (task 5.4).
+A PlatformIO env, `motion-demo`, builds the normal firmware with `-DMOTION_DEMO`. The demo moves nothing until the line `go` arrives on the serial console (boot still, D7), so the robot can be lifted first. It then plays motions 1–15, 99 and 100 in turn, with a 2 s pause between them, and then runs two interruption scripts: stop Forward 500 ms after it starts, then request motion 1 1 s into Dance 1 (it waits for Dance 1 to end), and finally one 500 ms keyframe. It logs one line per motion, `motion <id> start <ms> last_write <ms> end <ms> ticks <n> <complete|interrupted>`, one line per command, `command <stop|request <id>> <ms>`, and one line for the keyframe, `keyframe start <ms> end <ms> ticks <n>`, at the console baud rate that `firmware-build` sets. `tools/check_motion_log.py` compares the logged ticks and durations with the generated tables. This gives a deterministic check of on-robot timing without adding a command console to the shipped firmware. The visual match with stock is judged from video of both firmwares (task 5.4).
 
 ### D10. Single keyframe for `/online`
 
-`play_keyframe(angles[8], duration_ms)` takes angles 0–180° and a duration 0–60000 ms, and returns a 32-bit identifier, incremented per accepted keyframe and never 0 (0 means rejected). It replaces the current motion or keyframe and the pending request, as return to standby does, because the stock editor sends each keyframe to be played now. `keyframe_ended(id)` is true for every identifier except that of the keyframe now playing. That one rule covers a keyframe that finished, was stopped, was replaced, or was ended by a refused write, and an identifier that was never issued. A motion requested during a keyframe waits for it, as during a motion.
+`play_keyframe(angles[8], duration_ms)` takes angles 0–180° and a duration 0–60000 ms, and returns a 32-bit identifier, incremented per accepted keyframe and never 0 (0 means rejected). An accepted keyframe is handled like a motion request (D5): it plays at once when the player is idle and otherwise takes the single pending slot. This matches stock, which served `/online` only after a playing motion had ended. `keyframe_ended(id)` is true for every identifier except that of the keyframe now playing or pending. That one rule covers a keyframe that finished, was stopped, was replaced while pending, or was ended by the safe state or a refused write, and an identifier that was never issued.
 
-### D11. Output enable and the safe state
+### D11. The enable request, and the safe state
 
-`servo-output` sends no pulse until it is given a complete pose and rejects a single-servo write before then; in its safe state it disables output and refuses writes. The player meets this with one handshake: when the first tick of a motion or keyframe is due and `output_enabled()` is false, that tick gives `write_pose(zero pose)`, and the motion starts from the zero pose at the next tick. The zero pose is stock's boot pose, so the first motion after a reset plays as on stock, from zero, one tick later than the stock timing table. After the safe state the physical pose is unknown, and the zero pose is the same known starting point. Any refused write ends the motion and discards the pending request, so the player never keeps retrying against the gate. The firmware also calls `stop()` when servo output enters its safe state, so a pending request cannot start in a later pass.
+`servo-output` sends no pulse until an enable request with a complete pose is accepted, then returns a writer token that every later write must carry; entering its safe state releases every servo and makes the token stale (Cross-change assumptions). The player cannot see the token, so it does not try to track whether its token is still current. Instead, the first tick of every motion or keyframe accepted while the player is idle sends one enable request, which refreshes the token that the glue holds:
+
+- **Output not active** (after a reset, or after a safe state): the zero pose, in a tick of its own; the motion starts from it at the next tick. The zero pose is stock's boot pose, so the first motion after a reset plays as on stock, from zero, one tick later than the stock timing table. After a safe state the robot is limp and its physical pose unknown, and the zero pose is the same known starting point.
+- **Output active:** servo output's eight commanded angles, and the motion's first tick in the same tick. Nothing moves because of the request, and the durations stay those of the duration table. This also covers output that was re-enabled by another caller after a safe state while the player was idle, which would otherwise leave the player writing with a stale token.
+
+A motion or keyframe that follows from the pending slot sends no enable request, so the player never enables from within a sequence that is under way. Whether an enable request is accepted is `firmware-foundation`'s rule (Cross-change assumptions). A refused enable request or write ends the motion and discards the pending request, so the player never retries against the gate. At every other tick the player reads servo output's mode first, so a safe state entered by any cause (link loss, a calibration fault, the check console) ends the motion and its pending request at the player's next chance to run, without relying on each cause to call `stop()`.
 
 ```mermaid
 sequenceDiagram
@@ -139,11 +143,13 @@ sequenceDiagram
     participant P as Player
     participant S as Servo output
     C->>P: request(1)
-    P->>S: output_enabled()?
+    P-->>C: accepted
+    P->>S: active()?
     S-->>P: false
-    P->>S: write_pose(zero pose)
-    S-->>P: accepted (all eight servos start)
+    P->>S: enable(zero pose)
+    S-->>P: accepted (all eight servos start, token kept by the glue)
     loop 40 ticks of Standby
+        P->>S: active()?
         P->>S: write(i, angle)
     end
 ```
@@ -154,8 +160,9 @@ sequenceDiagram
 - **[Servo output clamps the angles.]** If `servo-output`'s safe range is narrower than the stock tables (30–170°), Sleep and Say Hi would play differently. → This is a cross-change assumption, and task 5.3 checks the extremes on the robot with the legs off the ground.
 - **[Loop stalls stretch motions.]** Wi-Fi or a slow HTTP response can delay ticks. → Stalls lengthen the motion and never compress it (as stock's `delay` does). The demo log measures the stretch, and task 5.3 requires the durations to be within 5% of the computed figures.
 - **[Latest request wins, which differs from stock.]** Clicking several buttons during a motion in the portal plays only the last. → A deliberate deviation (D5). It only differs from stock when requests overlap a motion.
+- **[Hold-to-repeat leaves a gap between runs.]** The pak requests the next run only after telemetry (every 100 ms) shows that the previous one ended, so a held walk pauses briefly between runs. → The robot keeps stock's play-once rule; the gap is the pak's and drive-link's timing, not the player's.
 - **[Intermediate angles differ from stock by about one step.]** → The poses at keyframe ends and the tick counts are stock's; the video comparison (task 5.4) judges the visual match.
-- **[The first motion starts with a jump to the zero pose.]** All eight servos start at once in the zero pose. → This is where stock's boot routine put them, and it happens only after a command, with the robot expected to be standing or lifted.
+- **[The first motion after a reset or a safe state starts with a jump to the zero pose.]** All eight servos start at once in the zero pose, also from a limp robot after a link loss. → This is where stock's boot routine put them, and it happens only after an explicit motion request (Open Questions).
 - **[RAM for the tables.]** About 1.3 KB of DRAM. → Acceptable against the ESP8266's roughly 80 KB. Revisit if `firmware-build` reports a RAM budget problem.
 
 ## Migration Plan
@@ -164,13 +171,16 @@ There is nothing to migrate. The on-robot checks need two writes to flash: the d
 
 ## Cross-change assumptions
 
-- **servo-output** (`firmware-foundation`) accepts a write of one servo index 0–7 and an angle in whole degrees, and a complete pose of eight angles; reports whether output is enabled; reports each servo's last commanded angle before calibration (or none); refuses writes, reporting the refusal to the caller synchronously, while its safe state holds; rejects single-servo writes before the first complete pose; and maps angles to pulses as stock does (1–180° to 400–2400 µs). Its per-servo safe range includes the stock tables' angles (30–170° before calibration) for the servos that use them; if it does not, it clamps, and task 5.3 records the difference. It owns the output-enable and safe-state gate and the mode state machine, and the firmware calls the player's `stop()` on entering the safe state.
-- **servo-calibration** (`firmware-foundation`) applies the per-servo trim inside servo output, so the player passes uncalibrated table angles and reports them.
-- **firmware-build** (`firmware-foundation`) provides the PlatformIO project in `firmware/` with a non-blocking Arduino loop that services the drive link's receive and failsafe step before the player in each pass and can call `service(millis())`; a native env in which `mise run test` runs the Unity tests for `core/`; room for a further env (`motion-demo`); and a serial console at a fixed baud rate that `mise run monitor` reads. It includes a suspended-robot check that confirms each servo index's joint and direction, which task 5.1 requires before any motion runs on the robot.
-- **web-portal** maps `/controller?pm=<n>` to `request(n)` (including the Standby button, `pm=1`, and 99), accepts that requests overlapping a motion follow D5 (latest request wins), plays `/online?m0..m7&t1` (used by the motion editor) through `play_keyframe` and waits with `keyframe_ended`, and stops the player before a direct servo command (`/controller?servo=`), which it sends to servo output. How it answers unknown ids and `pms` is its decision.
-- **drive-link** maps its command frame to `request(id)`, `stop()` and `return_to_standby()`, triggers servo output's safe state on link loss, reads the player state report (kind, current motion, keyframe, pending motion, commanded angles) for its telemetry, and distinguishes a pending request from the current motion. Its link and failsafe tests with servos attached run before the motion checks (task 5.1).
+These are calls this change makes to capabilities that other changes own, with the effect it expects. They are not requirements of this change; if an owner settles one differently, this change follows the owner.
+
+- **servo-output** (`firmware-foundation`): accepts an enable request with a complete pose of eight angles in `idle`, `safe` or `active` (in `active` it applies the pose) and returns a writer token, or refuses it (in `fault`, and whenever its re-enable rule does not allow it); accepts a single-servo write of an index 0–7 and a whole-degree angle only in `active` with the current token, and reports a refusal synchronously; reports its mode and each servo's last commanded angle before calibration (none in `idle`); makes the token stale on entering `safe` or `fault`; and maps angles to pulses as stock does (1–180° to 400–2400 µs). Its per-servo safe range includes the stock tables' angles (30–170° before calibration) for the servos that use them; if it does not, it clamps, and task 5.3 records the difference. It owns the output modes, the safe state, the writer token and the rule for re-enabling output after a safe state (the next explicit motion request, from a new pak session or from the portal when no session is live), and this change only sends the enable request of D11.
+- **servo-calibration** (`firmware-foundation`): applies the per-servo trim inside servo output, so the player passes uncalibrated table angles.
+- **firmware-build** (`firmware-foundation`): provides the PlatformIO project in `firmware/` with a non-blocking Arduino loop of poll services in which no service calls `delay()`, and which can call `service(millis())`; a native env in which `mise run test` runs the Unity tests for `core/`; room for a further env (`motion-demo`); and a serial console at a fixed baud rate that `mise run monitor` reads. It includes a suspended-robot check that confirms each servo index's joint and direction, which task 5.1 requires before any motion runs on the robot.
+- **drive-link**: services its receive and failsafe step before the player in every loop pass, so a stop or safe state that it causes in a pass applies before the player's tick; maps its command frame to `request(id)` (Standby is motion 1) and `stop()` (motion 0), and reports the request call's accepted or rejected answer; calls `stop()` at a session's start and in its link-loss failsafe, and requests servo output's safe state on link loss; reads the current and pending motion from the player's state report and the angles from servo output's report for its telemetry. Its link and failsafe tests with servos attached run before the motion checks (task 5.1).
+- **web-portal**: maps `/controller?pm=<n>` to `request(n)` (including the Standby button, `pm=1`, and 99), accepts that requests overlapping a motion follow D5 (latest request wins), keeps the `/online?m0..m7&t1` route (no stock page sends it, and it adds no editor control) and passes it to `play_keyframe`, stops the player before a direct servo command (`/controller?servo=`), which it sends to servo output, and reads the player's state report for "playing or pending". How it answers unknown ids and `pms` is its decision.
+- **handheld-pak**: owns hold-to-repeat. While a walking control (motions 2–7) is held, it requests the same motion again each time telemetry shows that the motion has ended, and stops requesting it on release. To leave, it requests Standby (motion 1), waits until telemetry shows it finished (or 3 s), then stops sending, after which drive-link's link-loss rule applies. Both rely only on the player's play-once rule, its pending slot and its state report.
 
 ## Open Questions
 
 - **Calibration persistence (for `servo-calibration`).** The user recalls that the original firmware had no calibration. The disassembly shows that stock adds a signed EEPROM byte per servo index to every angle and that `/save` writes and commits it; the dumped sector is erased, so every trim reads −1° on stock. Whether that ever persisted on this robot is not observed. This change does not depend on the answer: the player hands uncalibrated angles to servo output in either case.
-- **The zero pose as the enable pose.** D11 uses the zero pose because it is stock's boot pose. If the on-robot checks show that the jump into the zero pose from a resting robot is too violent, the enable pose is a decision for the user (for example Standby's first keyframe, all 90°).
+- **The zero pose as the enable pose.** D11 uses the zero pose because it is stock's boot pose. If the on-robot checks show that the jump into the zero pose from a resting or limp robot (after a link loss) is too violent, the enable pose is a decision for the user (for example Standby's first keyframe, all 90°).

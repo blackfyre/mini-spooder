@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Plays the stock firmware's motions (ids 1–15), its centre and zero positions (ids 99 and 100) and single caller-supplied keyframes on the robot's eight servos, from keyframe data taken from the stock flash image, and lets the web portal and the drive link start, queue, stop and replace them without blocking the rest of the firmware. It moves nothing until it is asked to, and it gives way to servo output's safe state.
+Plays the stock firmware's motions (ids 1–15), its centre and zero positions (ids 99 and 100) and single caller-supplied keyframes on the robot's eight servos, from keyframe data taken from the stock flash image, once per request, and lets the web portal and the drive link start, queue and stop them without blocking the rest of the firmware. It moves nothing until it is asked to, and it gives way to servo output's safe state.
 
 ## ADDED Requirements
 
@@ -30,22 +30,22 @@ The player SHALL accept exactly the motion ids of the stock firmware's `pm` para
 | 99 | Centre | Direct-pose routine with the centre pose |
 | 100 | Zero position | Direct-pose routine with the zero pose |
 
-The player SHALL make this list of ids and names available to its callers. A request for any other id SHALL be rejected and SHALL change neither the motion that is playing nor the pending request.
+The player SHALL make this list of ids and names available to its callers. The request call SHALL return at once whether it accepted the request. A request for any other id SHALL be rejected and SHALL change neither the motion or keyframe that is playing nor the pending request.
 
 #### Scenario: Known id
 
 - **WHEN** motion 2 is requested while the player is idle and servo output is enabled
-- **THEN** the player accepts the request and plays Forward
+- **THEN** the request call returns accepted and the player plays Forward
 
 #### Scenario: Centre
 
 - **WHEN** motion 99 is requested while the player is idle and servo output is enabled
-- **THEN** the player accepts the request and runs the direct-pose routine with the centre pose
+- **THEN** the request call returns accepted and the player runs the direct-pose routine with the centre pose
 
 #### Scenario: Unknown id
 
 - **WHEN** motion 16, 0, 98 or 101 is requested while motion 13 plays with motion 2 pending
-- **THEN** the request is rejected, motion 13 continues and motion 2 stays pending
+- **THEN** the request call returns rejected, motion 13 continues and motion 2 stays pending
 
 #### Scenario: Composite motion
 
@@ -73,14 +73,14 @@ Each motion table SHALL hold, in order, the keyframes stored for that motion in 
 
 ### Requirement: Current pose comes from servo output
 
-The player SHALL keep no pose of its own. At the start of every keyframe and of every direct-pose routine, it SHALL take each servo's start angle from servo output's last commanded angle for that servo, before calibration. Its state report SHALL report servo output's last commanded angles.
+The player SHALL keep no pose of its own. At the start of every keyframe and of every direct-pose routine, it SHALL take each servo's start angle from servo output's last commanded angle for that servo, before calibration.
 
 #### Scenario: Direct servo command between motions
 
 - **WHEN** Standby has ended, servo 2 is then commanded directly to 120 through servo output, and motion 8 is requested
 - **THEN** Lie's keyframe starts servo 2 from 120, not from Standby's 90
 
-#### Scenario: Servo the motion leaves unchanged
+#### Scenario: Servo moved away from its next keyframe angle
 
 - **WHEN** servo 0 is commanded directly to 100 after Standby and a motion whose first keyframe sets servo 0 to 70 is requested
 - **THEN** the player interpolates servo 0 from 100 to 70 during that keyframe
@@ -126,7 +126,7 @@ At tick `n`, every servo whose angle changes in the keyframe SHALL therefore be 
 
 ### Requirement: Playback timing
 
-Each tick SHALL have a deadline. The first tick of a motion requested while the player is idle SHALL be due at the player's next chance to run. After a tick due at `D` runs at time `t`, the next tick SHALL be due at `D + 10` ms when `t < D + 10`, and otherwise at `t + 10` ms. The player SHALL run at most one tick at each chance to run and SHALL NOT make up missed ticks: jitter of less than one tick does not accumulate, and a longer delay lengthens the motion by the delay instead of compressing it. When the firmware gives the player the chance to run every 1 ms, a motion's duration SHALL therefore be 10 ms times its tick count: for example 1650 ms for Forward (11 keyframes of 15 ticks). A motion SHALL end at the player's first chance to run at or after the deadline that its next tick would have had. A pending motion SHALL run its first tick at that same chance, and with nothing pending the player SHALL report itself idle from it.
+Each tick SHALL have a deadline. The first tick of a motion or keyframe accepted while the player is idle SHALL be due at the player's next chance to run. After a tick due at `D` runs at time `t`, the next tick SHALL be due at `D + 10` ms when `t < D + 10`, and otherwise at `t + 10` ms. The player SHALL run at most one tick at each chance to run and SHALL NOT make up missed ticks: jitter of less than one tick does not accumulate, and a longer delay lengthens the motion by the delay instead of compressing it. When the firmware gives the player the chance to run every 1 ms, a motion's duration SHALL therefore be 10 ms times its tick count: for example 1650 ms for Forward (11 keyframes of 15 ticks). A motion or keyframe SHALL end at the player's first chance to run at or after the deadline that its next tick would have had. A pending motion or keyframe SHALL run its first tick at that same chance, and with nothing pending the player SHALL report itself idle from it.
 
 #### Scenario: On-time ticks
 
@@ -173,45 +173,77 @@ The Standby table SHALL move all servos to 90 in a 200 ms keyframe and then to t
 
 ### Requirement: Still until the first command
 
-After a reset the player SHALL write nothing to servo output until it is given a motion request, a single keyframe or a return-to-standby command. It SHALL NOT run any motion or routine of its own at start-up.
+After a reset the player SHALL write nothing to servo output, and SHALL send it no enable request, until it accepts a motion request or a single keyframe. It SHALL NOT run any motion or routine of its own at start-up.
 
 #### Scenario: No command after reset
 
 - **WHEN** the firmware runs for 10 s after a reset and the player receives no request
-- **THEN** the player has written nothing to servo output and reports itself idle
+- **THEN** the player has written nothing to servo output, has sent it no enable request and reports itself idle
 
 ### Requirement: Output enable and the safe state
 
-When the first tick of a motion or keyframe is due and servo output reports that output is not enabled (no complete pose since the reset, or output disabled by servo output's safe state), the player SHALL at that tick give servo output the zero pose as one complete pose, and SHALL run the motion or keyframe from the zero pose, starting at its next tick. The player SHALL write single servos only while servo output reports output enabled. When servo output refuses a write, the player SHALL end the current motion or keyframe at once, discard the pending request and report itself idle. The firmware SHALL call stop when servo output enters its safe state, before the player's next chance to run.
+At the first tick of a motion or keyframe accepted while the player is idle, the player SHALL send servo output one enable request carrying a complete pose:
+
+- when servo output reports a mode other than active, the zero pose; that tick SHALL write nothing else, and the motion or keyframe SHALL run from the zero pose, starting at its next tick;
+- when servo output reports active, its eight commanded angles, so that no servo moves because of the request; the motion's first tick SHALL then run in the same tick.
+
+A motion or keyframe that starts from the pending slot when the previous one ends SHALL send no enable request. The player SHALL send an enable request at no other time. Whether servo output accepts an enable request, including after a safe state, is servo output's rule.
+
+At every other tick, the player SHALL first check servo output's mode; when it is not active, the player SHALL end the current motion or keyframe without writing, discard the pending request and report itself idle. When servo output refuses the enable request or a write, the player SHALL likewise end the current motion or keyframe at once, discard the pending request and report itself idle.
 
 #### Scenario: First command after reset
 
 - **WHEN** motion 1 is requested for the first time after a reset
-- **THEN** the player gives servo output the complete zero pose at the first tick and then plays Standby from the zero pose, 41 ticks in all
+- **THEN** the player sends servo output an enable request with the zero pose at the first tick and then plays Standby from the zero pose, 41 ticks in all
 
-#### Scenario: Write refused by the safe state
+#### Scenario: Safe state during a motion
+
+- **WHEN** servo output enters its safe state after tick 40 of Forward, with motion 6 pending, before the player's next chance to run
+- **THEN** at that chance the player writes nothing, motion 6 does not play and the player reports itself idle
+
+#### Scenario: Write refused
 
 - **WHEN** servo output refuses a write at tick 40 of Forward with motion 6 pending
 - **THEN** the player writes nothing further, motion 6 does not play and the player reports itself idle
 
 #### Scenario: Request after the safe state
 
-- **WHEN** servo output has disabled output in its safe state, later allows output again, and motion 2 is then requested
-- **THEN** the player gives servo output the complete zero pose at the first tick and then plays Forward from the zero pose
+- **WHEN** servo output has entered its safe state and motion 2 is then requested
+- **THEN** the player sends servo output an enable request with the zero pose at the first tick, and plays Forward from the zero pose if servo output accepts it
+
+#### Scenario: Enable refused
+
+- **WHEN** motion 2 is requested and servo output refuses the player's enable request
+- **THEN** the player writes nothing, discards the pending request and reports itself idle
+
+#### Scenario: Output enabled by another caller
+
+- **WHEN** a motion ended, servo output then entered its safe state and another caller enabled output again with the standby pose while the player was idle, and motion 8 is then requested
+- **THEN** at the first tick the player sends an enable request with servo output's commanded angles (the standby pose), no servo moves because of it, Lie's first tick runs in the same tick and Lie plays from the standby pose to the end
 
 ### Requirement: Single keyframe
 
-The player SHALL play one keyframe supplied by a caller: eight angles of 0–180° for servos 0–7 and a duration of 0–60000 ms. It SHALL reject angles or a duration outside those ranges and then change nothing. An accepted keyframe SHALL end the current motion or keyframe before its next tick, discard the pending request and run, interpolated as a motion keyframe, from servo output's commanded angles, its first tick due at the player's next chance to run. The player SHALL return a non-zero identifier for each accepted keyframe, different from every identifier it has returned since the reset (for at least the first 4294967295 accepted keyframes), and SHALL answer, for any identifier, whether that keyframe has ended: it has ended unless it is the keyframe now playing, so it has ended once it finished, was stopped, was replaced by another keyframe or a return to standby, or was ended by a refused write. A motion requested while a keyframe plays SHALL be pending and SHALL start when the keyframe ends.
+The player SHALL play one keyframe supplied by a caller: eight angles of 0–180° for servos 0–7 and a duration of 0–60000 ms. It SHALL reject angles or a duration outside those ranges and then change nothing. An accepted keyframe SHALL be handled as an accepted motion request is (Requests while a motion plays), and SHALL run, interpolated as a motion keyframe, from servo output's commanded angles at its start. The player SHALL return a non-zero identifier for each accepted keyframe, different from every identifier it has returned since the reset (for at least the first 4294967295 accepted keyframes), and SHALL answer, for any identifier, whether that keyframe has ended: it has ended unless it is the keyframe now playing or the pending keyframe, so it has ended once it finished, was stopped, was replaced while pending, or was ended by servo output's mode or a refused write.
 
-#### Scenario: Play a keyframe
+#### Scenario: Keyframe while idle
 
-- **WHEN** a keyframe of 70, 90, 90, 110, 110, 90, 90, 70 over 500 ms is supplied while Dance 1 plays with motion 3 pending
-- **THEN** Dance 1 ends before its next tick, motion 3 is discarded, the keyframe runs 50 ticks and servo output's commanded angles end at 70, 90, 90, 110, 110, 90, 90, 70
+- **WHEN** a keyframe of 70, 90, 90, 110, 110, 90, 90, 70 over 500 ms is accepted while the player is idle and servo output is active
+- **THEN** its first tick runs at the player's next chance to run, it runs 50 ticks and servo output's commanded angles end at 70, 90, 90, 110, 110, 90, 90, 70
+
+#### Scenario: Keyframe during a motion
+
+- **WHEN** a keyframe is accepted while Dance 1 plays with motion 3 pending
+- **THEN** motion 3 is discarded, Dance 1 completes and the keyframe runs after it
 
 #### Scenario: Keyframe ended
 
-- **WHEN** a 500 ms keyframe is accepted with identifier `k` and the player is given the chance to run every 1 ms
+- **WHEN** a 500 ms keyframe is accepted with identifier `k` while the player is idle and servo output is active, and the player is given the chance to run every 1 ms
 - **THEN** the player answers that `k` has not ended until 500 ms after its first tick and that it has ended from then on
+
+#### Scenario: Pending keyframe not ended
+
+- **WHEN** keyframe `k` is pending behind Forward
+- **THEN** the player answers that `k` has not ended, and answers that it has ended once motion 4 is requested and replaces it
 
 #### Scenario: Keyframe stopped
 
@@ -220,17 +252,17 @@ The player SHALL play one keyframe supplied by a caller: eight angles of 0–180
 
 #### Scenario: Zero-duration keyframe
 
-- **WHEN** a keyframe with duration 0 is accepted
+- **WHEN** a keyframe with duration 0 is accepted while the player is idle and servo output is active
 - **THEN** the player writes its angles at one tick and the keyframe has ended 10 ms later
 
 #### Scenario: Invalid keyframe
 
-- **WHEN** a keyframe with an angle of 181 or a duration of 60001 ms is supplied while Forward plays
-- **THEN** it is rejected, no identifier is returned and Forward continues
+- **WHEN** a keyframe with an angle of 181 or a duration of 60001 ms is supplied while Forward plays with motion 6 pending
+- **THEN** it is rejected, no identifier is returned, Forward continues and motion 6 stays pending
 
 ### Requirement: Requests while a motion plays
 
-A motion request accepted while a motion or keyframe plays SHALL become the single pending request, replacing any earlier pending request, and SHALL start when the current motion or keyframe ends. A request for the motion that is playing SHALL be pending like any other, so that it plays again after the current run. When nothing is pending at the end of a motion or keyframe, the player SHALL become idle and SHALL write nothing until the next request.
+The player SHALL play each accepted motion request or keyframe once, and SHALL NOT repeat a motion of its own accord. A motion request or keyframe accepted while a motion or keyframe plays SHALL become the single pending request, replacing any earlier pending request, and SHALL start when the current motion or keyframe ends. A request for the motion that is playing SHALL be pending like any other, so that it plays once more after the current run. When nothing is pending at the end of a motion or keyframe, the player SHALL become idle and SHALL write nothing until the next request.
 
 #### Scenario: Latest request wins
 
@@ -242,10 +274,10 @@ A motion request accepted while a motion or keyframe plays SHALL become the sing
 - **WHEN** motion 2 is requested while Forward plays
 - **THEN** Forward completes and a second Forward starts at the next tick from the last Forward keyframe's angles
 
-#### Scenario: Idle after the last motion
+#### Scenario: Played once
 
-- **WHEN** a motion ends with nothing pending
-- **THEN** the player reports itself idle and writes no further angles
+- **WHEN** motion 2 is requested once while the player is idle and nothing else is requested
+- **THEN** Forward plays its 165 ticks once, and the player then reports itself idle and writes no further angles
 
 ### Requirement: Stop
 
@@ -259,39 +291,25 @@ A stop command SHALL end the current motion or keyframe before the next tick and
 #### Scenario: Stop before a request starts
 
 - **WHEN** motion 2 is requested while the player is idle and stop is commanded before the player's next tick
-- **THEN** Forward never starts and the player writes no angle
+- **THEN** Forward never starts and the player writes no angle and sends no enable request
 
 #### Scenario: Start pose after a stop
 
 - **WHEN** Forward is stopped mid-keyframe and motion 1 is then requested
 - **THEN** Standby's first tick starts from the angles last written during Forward
 
-### Requirement: Return to standby
-
-A return-to-standby command SHALL end the current motion or keyframe before the next tick, discard the pending request (including one not yet started) and play motion 1 from servo output's commanded angles. When the player is idle, it SHALL play motion 1. This command is distinct from a request for motion 1, which waits for the current motion to end.
-
-#### Scenario: Standby during a motion
-
-- **WHEN** return to standby is commanded during Dance 1 with motion 3 pending
-- **THEN** Dance 1 ends before the next tick, motion 3 is discarded and motion 1 plays from the angles last written
-
-#### Scenario: Request for motion 1 during a motion
-
-- **WHEN** motion 1 is requested during Dance 1
-- **THEN** Dance 1 completes and motion 1 plays after it
-
 ### Requirement: Non-blocking playback
 
-Playing a motion or keyframe SHALL NOT stop the firmware from serving the drive link and the web portal: no tick SHALL take longer than 2 ms of processor time, the player SHALL hold the processor only during its ticks, and it SHALL NOT call `delay()`. A request that reaches the firmware during a motion SHALL be handled without waiting for the motion to end. In each pass of the firmware's loop, the player SHALL be serviced after the drive link's receive and failsafe step, so that a stop or a safe state caused in that pass takes effect before the player's tick.
+Playing a motion or keyframe SHALL NOT stop the firmware from serving the drive link and the web portal: no tick SHALL take longer than 2 ms of processor time, and the player SHALL hold the processor only during its ticks. A request, keyframe or stop that reaches the player during a motion SHALL be handled at once, without waiting for the motion to end.
 
 #### Scenario: Stop arrives during a long motion
 
-- **WHEN** a stop command reaches the firmware 2 s into Push up
+- **WHEN** a stop command reaches the player 2 s into Push up
 - **THEN** the player handles it before its next tick, without waiting for Push up's 7.18 s to elapse
 
 ### Requirement: Angles pass through calibrated servo output
 
-The player SHALL write the table angles, before calibration, through servo output, which applies the per-servo offsets of servo calibration and any safe-range clamp. The player itself SHALL NOT clamp the table angles: the stock tables use angles from 30° to 170°.
+The player SHALL write the table angles, before calibration, to servo output, and SHALL NOT clamp or offset them itself: the stock tables use angles from 30° to 170°.
 
 #### Scenario: Angle outside the slider range
 
@@ -300,19 +318,19 @@ The player SHALL write the table angles, before calibration, through servo outpu
 
 ### Requirement: Player state report
 
-The player SHALL report, at any time: whether it is idle, playing a motion or playing a keyframe; the id of the current motion (0 when idle or playing a keyframe); the identifier of the current keyframe (0 when none); the id of the pending motion (0 when none); and for each servo 0–7 servo output's last commanded angle before calibration, or none for a servo that has no commanded angle.
+The player SHALL report, at any time: whether it is idle, playing a motion or playing a keyframe; the id of the current motion (0 when idle or playing a keyframe); the identifier of the current keyframe (0 when none); the id of the pending motion (0 when none); and the identifier of the pending keyframe (0 when none). A motion or keyframe accepted while the player is idle SHALL be reported as pending until its first tick, and as current from that tick, including an enable tick, until it ends.
 
 #### Scenario: State during a motion
 
 - **WHEN** the state is read during Forward with motion 6 pending
-- **THEN** it reports playing a motion, current motion 2, keyframe 0, pending motion 6, and servo output's eight commanded angles
+- **THEN** it reports playing a motion, current motion 2, keyframe 0, pending motion 6 and pending keyframe 0
 
 #### Scenario: State when idle
 
 - **WHEN** the state is read after a motion has ended with nothing pending
-- **THEN** it reports idle, current motion 0, keyframe 0 and pending motion 0
+- **THEN** it reports idle, current motion 0, keyframe 0, pending motion 0 and pending keyframe 0
 
 #### Scenario: State before the first command
 
 - **WHEN** the state is read after a reset before any command
-- **THEN** it reports idle and no commanded angle for any servo
+- **THEN** it reports idle, current motion 0, keyframe 0, pending motion 0 and pending keyframe 0
