@@ -144,7 +144,7 @@ Within a session, with d the difference between a frame's sequence number and th
 - **THEN** the robot discards it and ends the session with the link-loss failsafe, and the next valid frame starts a new session that only sets the counter baseline
 
 ### Requirement: One remote at a time
-The robot SHALL lock to the sender, by IPv4 address and UDP port, of the first accepted frame of a session. While that session is live, the robot SHALL discard datagrams from every other sender without decoding them, count them as from another sender, and not charge them to the rate budget. After the session ends, the sender of the next valid command frame SHALL start a new session and become the locked sender. The robot SHALL report to the rest of the firmware whether a session is live, and SHALL report each session's start and each session's end in the loop pass in which it happens, before motion playback is serviced in that pass, in the order in which the datagrams that cause them are read. When a datagram read after a lapse both ends the lapsed session and starts the next one, the robot SHALL apply the ended session's link-loss failsafe and report its end before it reports the new session's start, so that the firmware sees the new session as started after the failsafe.
+The robot SHALL lock to the sender, by IPv4 address and UDP port, of the first accepted frame of a session. While that session is live, the robot SHALL discard datagrams from every other sender without decoding them, count them as from another sender, and not charge them to the rate budget. After the session ends, the sender of the next valid command frame SHALL start a new session and become the locked sender. The robot SHALL report to the rest of the firmware whether a session is live; that report SHALL change only when the robot reports a session's start or end, so that every part of the firmware that reads it after the drive link's receive step in a pass, such as the web portal, sees the same session state as the firmware's output gate. The robot SHALL report each session's start and each session's end in the loop pass in which it happens, before motion playback is serviced in that pass, in the order in which the datagrams that cause them are read. When a datagram read after a lapse both ends the lapsed session and starts the next one, the robot SHALL apply the ended session's link-loss failsafe and report its end before it reports the new session's start, so that the firmware sees the new session as started after the failsafe.
 
 #### Scenario: Second sender ignored
 - **WHEN** a second station sends valid command frames with changing counters while the locked remote's session is live
@@ -267,23 +267,23 @@ The counts SHALL run from boot and wrap from 65535 to 0.
 - **THEN** the robot sends no datagrams from the drive port
 
 ### Requirement: Coexistence with the web portal
-The drive link and the web portal SHALL share the access point. The drive port SHALL keep working while web portal pages load: the session SHALL stay live and its telemetry SHALL keep its schedule. The drive link SHALL NOT refuse, undo or replay a web portal request: a frame with an unchanged motion-request counter makes no request (Command frames). How the web portal handles its own requests during a session is the web portal's rule. When the session ends, the link-loss failsafe SHALL apply to whatever the robot was doing, whichever source started it.
+The drive link and the web portal SHALL share the access point. The drive port SHALL keep working while web portal pages load: the session SHALL stay live and its telemetry SHALL keep its schedule. The drive link SHALL NOT refuse, undo or replay a web portal request: a frame with an unchanged motion-request counter makes no request (Command frames). How the web portal handles its own requests during a session is the web portal's rule; it takes the session state from the drive link's live-session report (One remote at a time). When the session ends, the link-loss failsafe SHALL apply to whatever the robot was doing, whichever source started it.
 
 #### Scenario: Pages load while driving
 - **WHEN** a phone loads the web portal's pages while the remote sends its frames every 50 ms
 - **THEN** the remote's session stays live, no failsafe occurs, and telemetry frames keep arriving every 100 ms
 
-#### Scenario: Portal motion during a session
-- **WHEN** a session is live with an unchanged motion-request counter, and motion playback plays a motion that the web portal requested
+#### Scenario: Another caller's motion during a session
+- **WHEN** a session is live with an unchanged motion-request counter, and motion playback plays a motion that another caller than the drive link requested
 - **THEN** the remote's next frames make no request and no stop, and the motion plays on
 
-#### Scenario: Portal motion when the session ends
-- **WHEN** a motion that the web portal requested plays during a session, and the session lapses
+#### Scenario: Another caller's motion when the session ends
+- **WHEN** a motion that another caller than the drive link requested plays during a session, and the session lapses
 - **THEN** the robot calls motion playback's stop and requests the safe state, as for a motion the remote requested
 
 #### Scenario: Session state
 - **WHEN** a remote's first valid command frame starts a session, and later its frames stop for more than 300 ms
-- **THEN** the robot reports a live session from that frame until the lapse, and no live session afterwards
+- **THEN** the robot reports a live session from the loop pass that reads that frame, before motion playback is serviced in it, until the pass that detects the lapse, and no live session from that pass on
 
 ### Requirement: Golden frames
 The protocol's encoding SHALL be pinned by a golden file of named frames: for each, the frame's bytes and its header and payload field values, plus frames that a decoder must reject. It SHALL cover both frame types, sequence number 255, every result value, the extreme values of every field, and rejected frames for a bad CRC, an unknown version, an unknown type and a wrong payload length. The host tests SHALL check that the encoder produces every accepted golden frame's bytes from its fields, that the decoder returns each one with its fields, and that it rejects every rejected one. The file SHALL change only with a deliberate protocol change, which SHALL also change the protocol version.
