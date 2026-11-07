@@ -62,6 +62,12 @@ run = '''
 pio test -d firmware -e native || exit 1
 cd firmware/scripts && python -m unittest -v test_check_image
 '''
+
+[tasks.fuzz-link]
+description = "Build the drive-link fuzz driver with the host compiler and run each target with random inputs (--time, default 60s)"
+usage = 'flag "--time <time>" default="60s" help="time per target, such as 60s or 2m"'
+run = 'core/fuzz/drive_link/run.sh "${usage_time}"'
+
 # MiniSpooder.pak (handheld/, a Go module with SDL2 and gabagool): the
 # TrimUI Smart Pro remote. Every task that compiles the pak builds against
 # the patched gabagool in build/handheld/gabagool (handheld-fork).
