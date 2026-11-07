@@ -23,7 +23,7 @@ const Interface = "wlan0"
 // The robot's access point (drive-link: Access point; design A1).
 const (
 	RobotSSID     = "Spider Robot"
-	RobotPassword = "12345678"
+	RobotPassword = "87654321"
 )
 
 // RobotNet is the robot access point's network.

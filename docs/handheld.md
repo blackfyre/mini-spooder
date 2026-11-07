@@ -21,7 +21,7 @@ When NextUI sets a log directory, the log goes to `MiniSpooder.txt` in it.
 The pak does not join WiFi networks itself.
 
 1. Switch the robot on.
-2. In NextUI's WiFi settings, join the network `Spider Robot` with the password `12345678`.
+2. In NextUI's WiFi settings, join the network `Spider Robot` with the password `87654321`.
 3. Start MiniSpooder from Tools.
 
 At start the pak checks that `wlan0` has an address in 192.168.4.0/24. If it has none, the pak renews the lease once. If there is still none, it names the robot's network, its password and the network `wlan0` is on. Press A to check again, or Menu to quit.

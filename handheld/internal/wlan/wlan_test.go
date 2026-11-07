@@ -96,7 +96,7 @@ func TestNotJoinedNamesTheNetwork(t *testing.T) {
 		t.Fatalf("ran %v, want one renewal", run.calls)
 	}
 	msg := err.Error()
-	for _, want := range []string{`"Spider Robot"`, "12345678", "NextUI's WiFi settings", `"Home WiFi"`} {
+	for _, want := range []string{`"Spider Robot"`, "87654321", "NextUI's WiFi settings", `"Home WiFi"`} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("join message %q lacks %q", msg, want)
 		}

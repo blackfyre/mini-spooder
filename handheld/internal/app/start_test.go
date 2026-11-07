@@ -116,7 +116,7 @@ func TestDeviceStartNotJoinedSendsNothing(t *testing.T) {
 	sys := System{Runner: run, Addrs: addrs("10.0.0.5"), ReadFile: os.ReadFile}
 	_, err = Start(context.Background(), Config{Device: true, Addr: robot.LocalAddr().String()}, sys)
 	var nj *wlan.NotJoinedError
-	if !errors.As(err, &nj) || !strings.Contains(err.Error(), "Spider Robot") || !strings.Contains(err.Error(), "12345678") {
+	if !errors.As(err, &nj) || !strings.Contains(err.Error(), "Spider Robot") || !strings.Contains(err.Error(), "87654321") {
 		t.Fatalf("got %v, want the join message", err)
 	}
 	if contains(run.calls, "iw dev wlan0 set power_save off") {
