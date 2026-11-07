@@ -34,7 +34,8 @@ User-facing screens follow the **Blackfyre** design system (tokens prefixed `bf-
 
 - **Chip:** ESP8266EX with 4 MB flash and a 26 MHz crystal, behind a CP2102 USB-to-UART adapter.
 - **Port:** address the robot through `$ROBOT_PORT`, set in `mise.toml` to its `/dev/serial/by-id/` path. `/dev/ttyUSBn` numbers change between plug-ins, and other ESP32 and RP2040 boards are often connected to the same machine.
-- **Servos:** indices 0–7 are on GPIO 14, 12, 13, 15, 16, 5, 4 and 2.
+- **Stock firmware as the hardware reference:** the stock firmware defines the hardware. Hardware it does not use (battery sensing, sensors, extra pins) doesn't exist for this project.
+- **Servos:** indices 0–7 are attached to GPIO 15, 13, 12, 14, 2, 4, 5 and 16, the stock firmware's startup order; its motion tables assume that order. The stock pages' labels (14, 12, 13, 15, 16, 5, 4, 2) and its remapping after `/save` are not the hardware (see `baseline/README.md`).
 - **Boot-strap pins:** GPIO15 must be low at boot and GPIO2 must be high, so the servos on those pins can twitch at reset.
 - **Verification:** check hardware behaviour on the robot; host checks alone don't confirm it.
 
