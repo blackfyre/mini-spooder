@@ -7,6 +7,7 @@
 
 #include "calibration_store.h"
 #include "diag.h"
+#include "motion_service.h"  // motion-playback: the motion player
 #include "servo/output_gate.h"
 #include "servo/servo_bank.h"
 #include "servo_driver.h"
@@ -63,6 +64,9 @@ void setup() {
   gate = &outputGate;
   gate->addModeListener(printModeLine, nullptr);
   calibration.attachGate(outputGate);
+
+  // motion-playback: the player on the output gate; moves nothing until a request.
+  motion_service::begin(outputGate);
   if (gate->mode() == ms::OutputMode::Fault) {
     gate->modeLine(line, sizeof line);
     diag::line(line);
@@ -82,6 +86,8 @@ void loop() {
 #ifdef MINI_SPOODER_CHECK_CONSOLE
   console.poll(nowMs);
 #endif
+  // motion-playback: at most one tick; after drive-link's receive and failsafe step.
+  motion_service::poll(nowMs);
   driver.poll(nowMs);  // after the services, so their commands reach the pins this pass
   diag::poll();
 
