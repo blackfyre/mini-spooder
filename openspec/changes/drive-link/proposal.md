@@ -12,8 +12,8 @@ The stock firmware is driven only from its web portal in a phone browser (`/cont
   - a command frame: the requested motion id (the stock `pm` numbers 1–15, 99 and 100; 0 for stop) and a motion-request counter;
   - a telemetry frame: the motion playing and the one pending, the result of the last request, an echo of the newest command frame's sequence number and age for the round-trip time, the joint angles and the link statistics.
 - The remote sends its complete desired state every 50 ms. The robot turns each change of the motion-request counter into one motion request, ignores repeats, and sets new baselines after a gap, so a lost or repeated frame changes nothing.
-- One remote at a time (sender lock), a sequence-number rule, a datagram rate limit and a 300 ms liveness rule. When the remote's frames stop, the link-loss failsafe stops the motion player, discards any pending request and requests the firmware's safe state, which disables servo output; it overrides every motion and portal command. Only accepted frames keep a session alive.
-- The web portal and the pak share the access point, one controller at a time: the robot reports a live session, during which the portal refuses movement requests (its rule), and a session's start stops whatever the portal started.
+- One remote at a time (sender lock), a sequence-number rule, a datagram rate limit and a 300 ms liveness rule. When the remote's frames stop, the link-loss failsafe calls motion playback's stop and requests the firmware's safe state, whose effect `firmware-foundation` defines (output disabled, overriding every motion and portal command). Only accepted frames keep a session alive.
+- The web portal and the pak share the access point. The robot reports whether a session is live, a session's start stops whatever the portal started, and the link-loss failsafe applies whichever source started the motion. How the portal handles its own requests during a session is `web-portal`'s rule.
 - Hardware-free codec and session logic in `core/`, host-tested with golden frames that pin the encoding for the pak's copy, and fuzz tests of the decoder and of datagram acceptance with a bounded fuzz command.
 - A small desktop probe that sends command frames and prints telemetry, so the link can be checked on the robot before the pak exists.
 
@@ -27,7 +27,7 @@ None. No specs exist yet in `openspec/specs/`.
 
 ## Impact
 
-- **New code:** `core/drive_link/` (protocol codec, decoder and session logic), its host tests, a golden frame file, a fuzz harness in `fuzz/drive_link/` (outside `core/`, so no build compiles it by accident), `firmware/` glue for the access point and the UDP socket, and `tools/drive-probe.py`.
+- **New code:** `core/drive_link/` (protocol codec, decoder and session logic), its host tests, a golden frame file, a fuzz harness in `core/fuzz/drive_link/` (which neither firmware-foundation env compiles), `firmware/` glue for the access point and the UDP socket, and `tools/drive-probe.py`.
 - **mise:** a `fuzz-link` task. The host tests join the existing `test` task.
 - **Dependencies:** none new. The firmware uses the Arduino ESP8266 core's `ESP8266WiFi` and `WiFiUdp`. The probe uses only the Python standard library.
 - **Other changes:** this change depends on `motion-playback` (request with its pending rule, stop, current and pending motion, its catalogue), on `firmware-foundation`'s safe-state gate, and on `servo-output` (commanded angles), all by name. `web-portal` serves on the access point defined here and reads the live-session state. `handheld-pak` implements the remote side of this protocol against the golden file.
