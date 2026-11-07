@@ -1,0 +1,34 @@
+# Drive link protocol version 1: golden frames (STAND-IN).
+# Written from the drive-link specification by testdata/gen_stand_in.py, not
+# from core/'s codec: drive-link's own file (core/test/golden/drive_link_v1.txt)
+# does not exist yet. The pak's tests read that file in place once it does.
+#
+# One frame per line, fields separated by single spaces:
+#   <name> <frame bytes as lowercase hex, no separators> <field>=<value> ...
+# Values are decimal. The header fields (version, type, seq) come first, then
+# the payload fields in payload order. A line whose only field is "rejected"
+# is a frame a decoder must discard. Lines starting with # are comments.
+command_idle_zero a5010100020000818f version=1 type=command seq=0 motion=0 counter=0
+command_forward a501011102020555d4 version=1 type=command seq=17 motion=2 counter=5
+command_stop a501012a020006a2b0 version=1 type=command seq=42 motion=0 counter=6
+command_zero_position a50101030264099a42 version=1 type=command seq=3 motion=100 counter=9
+command_centre a501010402630a43ba version=1 type=command seq=4 motion=99 counter=10
+command_extremes_seq_wrap a50101ff02ffff2dd9 version=1 type=command seq=255 motion=255 counter=255
+telemetry_baseline_none a50102001a0000000000ffffffffffffffffff000000000000000000000000630d version=1 type=telemetry seq=0 playing=0 pending=0 counter=0 result=0 commandSeq=0 ageMs=255 angle0=255 angle1=255 angle2=255 angle3=255 angle4=255 angle5=255 angle6=255 angle7=255 accepted=0 malformed=0 outOfSequence=0 otherSender=0 rateLimited=0 failsafes=0
+telemetry_playing_accepted a50102071a02000501280a465a5a6e6e5a5a46e80303000200010000000100c10a version=1 type=telemetry seq=7 playing=2 pending=0 counter=5 result=1 commandSeq=40 ageMs=10 angle0=70 angle1=90 angle2=90 angle3=110 angle4=110 angle5=90 angle6=90 angle7=70 accepted=1000 malformed=3 outOfSequence=2 otherSender=1 rateLimited=0 failsafes=1
+telemetry_pending_accepted a50102081a0b09070129002d875a00b4010203020100000000000000000000598b version=1 type=telemetry seq=8 playing=11 pending=9 counter=7 result=1 commandSeq=41 ageMs=0 angle0=45 angle1=135 angle2=90 angle3=0 angle4=180 angle5=1 angle6=2 angle7=3 accepted=258 malformed=0 outOfSequence=0 otherSender=0 rateLimited=0 failsafes=0
+telemetry_stop_requested a50102091a000008022afe465a5a6e6e5a5a460100020003000400050006003464 version=1 type=telemetry seq=9 playing=0 pending=0 counter=8 result=2 commandSeq=42 ageMs=254 angle0=70 angle1=90 angle2=90 angle3=110 angle4=110 angle5=90 angle6=90 angle7=70 accepted=1 malformed=2 outOfSequence=3 otherSender=4 rateLimited=5 failsafes=6
+telemetry_rejected a501020a1a000009032b0c465a5a6e6e5a5a46000000000000000000000000b126 version=1 type=telemetry seq=10 playing=0 pending=0 counter=9 result=3 commandSeq=43 ageMs=12 angle0=70 angle1=90 angle2=90 angle3=110 angle4=110 angle5=90 angle6=90 angle7=70 accepted=0 malformed=0 outOfSequence=0 otherSender=0 rateLimited=0 failsafes=0
+telemetry_extremes_seq_wrap a50102ff1affffff03fffffffffffffffffffffffffffffffffffffffffffffcc4 version=1 type=telemetry seq=255 playing=255 pending=255 counter=255 result=3 commandSeq=255 ageMs=255 angle0=255 angle1=255 angle2=255 angle3=255 angle4=255 angle5=255 angle6=255 angle7=255 accepted=65535 malformed=65535 outOfSequence=65535 otherSender=65535 rateLimited=65535 failsafes=65535
+telemetry_centre_playing a50102801a6364010100010000000000000000feff01000080000000000000a150 version=1 type=telemetry seq=128 playing=99 pending=100 counter=1 result=1 commandSeq=0 ageMs=1 angle0=0 angle1=0 angle2=0 angle3=0 angle4=0 angle5=0 angle6=0 angle7=0 accepted=65534 malformed=1 outOfSequence=32768 otherSender=0 rateLimited=0 failsafes=0
+reject_bad_crc_command a501010502020503fa rejected
+reject_bad_crc_telemetry a50102061a000000000000000000000000000000000000000000000000000073ce rejected
+reject_corrupt_payload_command a50101050202040305 rejected
+reject_version_2_command a5020105020205e3cb rejected
+reject_version_0_telemetry a50002051a0000000000000000000000000000000000000000000000000000d1aa rejected
+reject_unknown_type_3 a50103050202058041 rejected
+reject_unknown_type_0 a501000502020552af rejected
+reject_command_length_3 a5010105030205001125 rejected
+reject_command_length_1 a501010501026a35 rejected
+reject_telemetry_length_25 a50102051900000000000000000000000000000000000000000000000000c0ea rejected
+reject_telemetry_length_26_as_command a50101051a0000000000000000000000000000000000000000000000000000c5a2 rejected

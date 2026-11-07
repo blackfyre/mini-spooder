@@ -1,0 +1,81 @@
+gabagool v2.26.6 (commit 9776c2a): an application hook for the NextUI power
+button (openspec change handheld-pak, design D5; copied from Spooder.pak's
+patch).
+
+Options.PowerButtonHook func(long bool), when set, is called on the power
+button's goroutine instead of running the suspend script (long false) or the
+power-off command (long true), so the application can act first
+(MiniSpooder.pak requests Standby and waits for the robot to finish it).
+Unset, the behaviour is unchanged. Applied by `mise run handheld-fork`.
+
+diff --git a/pkg/gabagool/init.go b/pkg/gabagool/init.go
+index 00b3a73..d07d95c 100644
+--- a/pkg/gabagool/init.go
++++ b/pkg/gabagool/init.go
+@@ -51,6 +51,12 @@ type Options struct {
+ 	FlipFaceButtons      bool                   // Use direct face button mapping (A=A, B=B) instead of Nintendo-style swap
+ 	DisplayOrientation   DisplayOrientation     // Clockwise rotation of the display (0, 90, 180, 270 degrees)
+ 	DisabledInputSources DisabledInputSources   // Input event types to ignore (keyboard, controller, joystick)
++
++	// PowerButtonHook, when set, is called on the power button's goroutine
++	// instead of running the suspend script (long false: a press shorter
++	// than 2 s) or the power-off command (long true: held 2 s), leaving
++	// both to the application. Only used with IsNextUI.
++	PowerButtonHook func(long bool)
+ }
+ 
+ // Init initializes the SDL subsystems, theming, and input handling.
+@@ -107,6 +113,7 @@ func Init(options Options) {
+ 			CoolDownTime:    1 * time.Second,
+ 			SuspendScript:   "/mnt/SDCARD/.system/" + platformEnv + "/bin/suspend",
+ 			ShutdownCommand: "/sbin/poweroff", // TODO: touch /tmp/poweroff and exit
++			Hook:            options.PowerButtonHook,
+ 		}
+ 		internal.SetTheme(theme)
+ 	} else {
+diff --git a/pkg/gabagool/internal/power.go b/pkg/gabagool/internal/power.go
+index dde1e97..8c94f50 100644
+--- a/pkg/gabagool/internal/power.go
++++ b/pkg/gabagool/internal/power.go
+@@ -16,6 +16,9 @@ type PowerButtonConfig struct {
+ 	CoolDownTime    time.Duration
+ 	SuspendScript   string
+ 	ShutdownCommand string
++	// Hook, when set, is called instead of running SuspendScript (long
++	// false) or ShutdownCommand (long true).
++	Hook func(long bool)
+ }
+ 
+ // Adapted from https://github.com/ben16w/minui-power-control
+@@ -48,8 +51,13 @@ func PowerButtonHandler(wg *sync.WaitGroup, config PowerButtonConfig) {
+ 				pressTime = time.Time{}
+ 
+ 				if duration < config.ShortPressMax {
+-					log.Println("Short press detected, suspending...")
+-					runScript(config.SuspendScript)
++					if config.Hook != nil {
++						log.Println("Short press detected, calling the hook...")
++						config.Hook(false)
++					} else {
++						log.Println("Short press detected, suspending...")
++						runScript(config.SuspendScript)
++					}
+ 					cooldownUntil = time.Now().Add(config.CoolDownTime)
+ 				}
+ 			} else if event.Value == 1 {
+@@ -57,8 +65,13 @@ func PowerButtonHandler(wg *sync.WaitGroup, config PowerButtonConfig) {
+ 			} else if event.Value == 2 {
+ 				duration := time.Since(pressTime)
+ 				if duration >= config.ShortPressMax {
+-					log.Println("Button held down for 2 seconds, shutting down...")
+-					runScript(config.ShutdownCommand)
++					if config.Hook != nil {
++						log.Println("Button held down for 2 seconds, calling the hook...")
++						config.Hook(true)
++					} else {
++						log.Println("Button held down for 2 seconds, shutting down...")
++						runScript(config.ShutdownCommand)
++					}
+ 					cooldownUntil = time.Now().Add(config.CoolDownTime)
+ 				}
+ 			}

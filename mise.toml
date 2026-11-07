@@ -4,6 +4,9 @@ python = "3.13"
 uv = "0.11.15"
 "pipx:platformio" = "6.2.0"
 "pipx:esptool" = "5.2.0"
+# MiniSpooder.pak (handheld/, a Go module with SDL2 and gabagool). The device
+# build's Containerfile pins the same version (check-go-version.sh).
+go = "1.27.1"
 
 [env]
 # The robot's CP2102 adapter by its stable name: ttyUSB numbers change between plug-ins.
@@ -59,3 +62,60 @@ run = '''
 pio test -d firmware -e native || exit 1
 cd firmware/scripts && python -m unittest -v test_check_image
 '''
+# MiniSpooder.pak (handheld/, a Go module with SDL2 and gabagool): the
+# TrimUI Smart Pro remote. Every task that compiles the pak builds against
+# the patched gabagool in build/handheld/gabagool (handheld-fork).
+[tasks.handheld-fork]
+description = "Download gabagool v2.26.6 (checksum-checked), copy it to build/handheld/gabagool and apply the power-button hook patch"
+run = "handheld/scripts/fork-gabagool.sh"
+
+[tasks.handheld-deps]
+description = "Check the Linux packages the pak's SDL2 build needs (names the missing Fedora or Debian ones)"
+run = "handheld/scripts/check-deps.sh"
+
+[tasks.handheld-test]
+description = "Run the pak's host checks (gofmt, go vet, staticcheck, go test; the end-to-end tests are handheld-e2e)"
+depends = ["handheld-fork", "handheld-deps"]
+dir = "handheld"
+env = { CGO_ENABLED = "1" }
+run = [
+  "test -z \"$(gofmt -l .)\" || { gofmt -l .; exit 1; }",
+  "go vet ./...",
+  "go tool staticcheck ./...",
+  "go test $(go list ./... | grep -v /e2e$)",
+]
+
+[tasks.handheld-e2e]
+description = "Run the pak's end-to-end tests against an in-process fake robot on loopback"
+depends = ["handheld-fork"]
+dir = "handheld"
+run = "go test -count=1 ./e2e"
+
+[tasks.handheld-build]
+description = "Build the pak for desktop Linux (build/handheld/amd64/minispooder; --addr, no WiFi steps) and the fake robot"
+depends = ["handheld-fork", "handheld-deps"]
+dir = "handheld"
+env = { CGO_ENABLED = "1" }
+run = [
+  "go build -trimpath -o ../build/handheld/amd64/minispooder ./cmd/minispooder",
+  "CGO_ENABLED=0 go build -trimpath -o ../build/handheld/amd64/fake-robot ./cmd/fake-robot",
+]
+
+[tasks.fake-robot]
+description = "Build and run the fake robot on 127.0.0.1:52041 (the drive-link port); start the desktop build with --addr 127.0.0.1:52041"
+depends = ["handheld-fork"]
+dir = "handheld"
+run = [
+  "CGO_ENABLED=0 go build -trimpath -o ../build/handheld/amd64/fake-robot ./cmd/fake-robot",
+  "../build/handheld/amd64/fake-robot --listen 127.0.0.1:52041",
+]
+
+[tasks.handheld-build-device]
+description = "Build the pak for the TrimUI (linux/arm64, glibc 2.31) under rootless Podman to build/handheld/arm64"
+depends = ["handheld-fork"]
+run = "handheld/scripts/build-device.sh"
+
+[tasks.handheld-package]
+description = "Build the device binary, then zip MiniSpooder.pak (launch.sh, the binary, lib/) to build/handheld/MiniSpooder.pak.zip"
+depends = ["handheld-build-device"]
+run = "handheld/scripts/package.sh"

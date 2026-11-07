@@ -6,3 +6,5 @@ references/lafvin/
 .claude/worktrees/
 .codegraph/
 __pycache__/
+# The pak's device build files (Containerfile), not build output.
+!/handheld/build/
