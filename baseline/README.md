@@ -58,7 +58,7 @@ Corrected after the disassembly in `docs/lafvin-comparison.md`, which has the ev
 | `/editor` | Motion editor page: eight sliders (45–135°) and a generated comma-separated keyframe |
 | `/zero` | Zero check page |
 | `/setting` | Servo calibration page |
-| `/online?m0=…&m7=&t1=` | Plays one keyframe: eight angles over `t1` ms (used by the motion editor) |
+| `/online?m0=…&m7=&t1=` | Plays one keyframe: eight angles over `t1` ms. No stock page sends it |
 
 Every route is registered for GET. Unknown `pm` values are accepted and ignored.
 
