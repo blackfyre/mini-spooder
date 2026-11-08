@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -133,5 +134,26 @@ func TestScreenFooterAndLeave(t *testing.T) {
 	sc := h.app.Screen(h.now)
 	if len(sc.Footer) != 3 || sc.Footer[0] != (FooterKey{"B", "STOP"}) || sc.Leaving != "" {
 		t.Fatalf("footer %+v leaving %q", sc.Footer, sc.Leaving)
+	}
+}
+
+func TestJoinViews(t *testing.T) {
+	for _, c := range []struct {
+		in, want float64
+	}{{-0.5, 0}, {0.25, 0.25}, {1.5, 1}} {
+		v := JoiningView(c.in)
+		if !v.ShowProgress || v.Progress != c.want || v.Status != "JOINING" || v.Message != JoiningMessage {
+			t.Fatalf("JoiningView(%v) = %+v, want progress %v", c.in, v, c.want)
+		}
+		if len(v.Footer) != 1 || v.Footer[0] != (FooterKey{"MENU", "QUIT"}) {
+			t.Fatalf("joining footer %+v", v.Footer)
+		}
+	}
+	v := JoinFailedView(errors.New("  no robot\n"))
+	if v.ShowProgress || v.Status != "NOT JOINED" || v.StatusTone != ToneWarn || v.Message != "no robot" {
+		t.Fatalf("JoinFailedView = %+v", v)
+	}
+	if len(v.Footer) != 2 || v.Footer[0].Key != "A" || v.Footer[1].Key != "MENU" {
+		t.Fatalf("join failed footer %+v", v.Footer)
 	}
 }

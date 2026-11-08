@@ -145,7 +145,7 @@ type texEntry struct {
 	used bool
 }
 
-// screen draws the drive screen on gabagool's renderer.
+// screen draws the join and drive screens on gabagool's renderer.
 type screen struct {
 	win   window
 	r     *sdl.Renderer
@@ -319,7 +319,7 @@ func (s *screen) draw(sc app.Screen) {
 	s.fill(0, 0, s.w, s.h, 0, colWindow)
 	s.header(sc)
 	bodyY := s.gap(margin) + s.gap(headerH) + s.gap(12)
-	footerY := s.h - s.gap(margin) - s.gap(keyHeight) - s.gap(keyEdge)
+	footerY := s.footerY()
 	bodyH := footerY - s.gap(panelGap) - bodyY
 	colW := (s.w - 2*s.gap(margin) - 2*s.gap(panelGap)) / 3
 	x0 := s.gap(margin)
@@ -338,14 +338,26 @@ func (s *screen) draw(sc app.Screen) {
 	s.win.Present()
 }
 
-// header: "MINISPOODER." with the orange full stop, then the link and
-// signal chips.
-func (s *screen) header(sc app.Screen) {
+// title draws "MINISPOODER." with the orange full stop at the top left and
+// returns the header's top.
+func (s *screen) title() int32 {
 	y := s.gap(margin) - s.gap(4)
 	tx := s.gap(margin)
 	ty := y + (s.gap(headerH)-int32(s.f.title.Height()))/2
 	tx += s.text(s.f.title, app.Title, tx, ty, s.w/2, colText)
 	s.text(s.f.title, ".", tx, ty, s.w/2, colAccent)
+	return y
+}
+
+// footerY is the top of the footer keycaps (or the leave banner).
+func (s *screen) footerY() int32 {
+	return s.h - s.gap(margin) - s.gap(keyHeight) - s.gap(keyEdge)
+}
+
+// header: "MINISPOODER." with the orange full stop, then the link and
+// signal chips.
+func (s *screen) header(sc app.Screen) {
+	y := s.title()
 
 	cy := y + (s.gap(headerH)-s.gap(chipHeight))/2
 	linkDot := toneColour(sc.LinkChipTone)
@@ -491,4 +503,79 @@ func (s *screen) banner(text string, y int32) {
 	h := s.gap(keyHeight) + s.gap(keyEdge)
 	s.fill(s.gap(margin), y, s.w-2*s.gap(margin), h, s.gap(wellRadius), colAccent)
 	s.text(s.f.micro, text, s.gap(margin)+s.gap(20), y+(h-int32(s.f.micro.Height()))/2, s.w, colOnAccent)
+}
+
+// The join screen's panel.
+const (
+	joinPanelW = 860 // at most, centred
+	barHeight  = 14
+	lineGap    = 8 // between wrapped lines of read text
+)
+
+// drawJoin draws the join screen: the title, one panel with the status
+// kicker, the message in Archivo and the join's progress, and the footer
+// keycaps.
+func (s *screen) drawJoin(v app.JoinView) {
+	s.fill(0, 0, s.w, s.h, 0, colWindow)
+	s.title()
+	pw := min(s.gap(joinPanelW), s.w-2*s.gap(margin))
+	tw := pw - 2*s.gap(panelPad)
+	lines := wrap(func(str string) int32 { return textWidth(s.f.value, str) }, v.Message, tw)
+	lh := int32(s.f.value.Height()) + s.gap(lineGap)
+	ph := 2*s.gap(panelPad) + int32(s.f.micro.Height()) + s.gap(14) + int32(len(lines))*lh
+	if v.ShowProgress {
+		ph += s.gap(16) + max(s.gap(barHeight), int32(s.f.mono.Height()))
+	}
+	top := s.gap(margin) + s.gap(headerH)
+	footerY := s.footerY()
+	px := (s.w - pw) / 2
+	py := top + max(0, (footerY-top-ph)/2)
+	tc := colMuted
+	if v.StatusTone != app.ToneMuted {
+		tc = toneColour(v.StatusTone)
+	}
+	iy := s.panel(px, py, pw, ph, "01", v.Status, tc)
+	ix := px + s.gap(panelPad)
+	for _, l := range lines {
+		s.text(s.f.value, l, ix, iy, tw, colText)
+		iy += lh
+	}
+	if v.ShowProgress {
+		iy += s.gap(16) - s.gap(lineGap)
+		pct := fmt.Sprintf("%3d%%", int(v.Progress*100+0.5))
+		pctW := textWidth(s.f.mono, "100%")
+		bw := tw - pctW - s.gap(16)
+		rowH := max(s.gap(barHeight), int32(s.f.mono.Height()))
+		by := iy + (rowH-s.gap(barHeight))/2
+		s.fill(ix, by, bw, s.gap(barHeight), s.gap(barHeight)/2, colWell)
+		s.fill(ix, by, int32(float64(bw)*v.Progress), s.gap(barHeight), s.gap(barHeight)/2, colAccent)
+		s.text(s.f.mono, pct, ix+tw-pctW, iy+(rowH-int32(s.f.mono.Height()))/2, pctW, colText)
+	}
+	s.footer(v.Footer, footerY)
+	s.endFrame()
+	s.win.Present()
+}
+
+// wrap breaks str into lines at most width wide as measure measures them,
+// at spaces and at the line breaks in str. A word wider than width keeps a
+// line of its own (text shortens it when drawn).
+func wrap(measure func(string) int32, str string, width int32) []string {
+	var lines []string
+	for _, para := range strings.Split(str, "\n") {
+		line := ""
+		for _, word := range strings.Fields(para) {
+			if line == "" {
+				line = word
+				continue
+			}
+			if next := line + " " + word; measure(next) <= width {
+				line = next
+				continue
+			}
+			lines = append(lines, line)
+			line = word
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }

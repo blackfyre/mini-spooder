@@ -246,11 +246,47 @@ func robotView(have, stale bool, t protocol.Telemetry) Robot {
 // Title is the drive screen's title, without its orange full stop.
 const Title = "MINISPOODER"
 
-// JoiningMessage is the progress screen's text while the pak joins the
-// robot's network.
+// JoiningMessage is the join screen's text while the pak joins the robot's
+// network.
 const JoiningMessage = "Joining the robot's network " + wlan.RobotSSID + "..."
 
 // JoinMessage is the join instructions for err, shown with retry and quit.
 func JoinMessage(err error) string {
 	return strings.TrimSpace(err.Error())
+}
+
+// JoinView is the join screen, drawn before the link starts: while the pak
+// joins the robot's network (with its progress) and after a start that
+// failed (with retry and quit). It has the drive screen's title and footer
+// keycaps, and one panel.
+type JoinView struct {
+	// Status is the panel's kicker word, with its tone: JOINING, or NOT
+	// JOINED after a failed start.
+	Status     string
+	StatusTone Tone
+	Message    string
+	// Progress is the share of the join done, from 0 to 1, shown when
+	// ShowProgress is set.
+	ShowProgress bool
+	Progress     float64
+	Footer       []FooterKey
+}
+
+// JoiningFooter is the join screen's controls while the pak joins.
+var JoiningFooter = []FooterKey{{"MENU", "QUIT"}}
+
+// JoinFailedFooter is the join screen's controls after a failed start: A
+// (or Start) retries, Menu quits.
+var JoinFailedFooter = []FooterKey{{"A", "RETRY"}, {"MENU", "QUIT"}}
+
+// JoiningView is the join screen while the join runs, progress done (from 0
+// to 1, clamped).
+func JoiningView(progress float64) JoinView {
+	return JoinView{Status: "JOINING", StatusTone: ToneMuted, Message: JoiningMessage,
+		ShowProgress: true, Progress: min(max(progress, 0), 1), Footer: JoiningFooter}
+}
+
+// JoinFailedView is the join screen after a start that failed with err.
+func JoinFailedView(err error) JoinView {
+	return JoinView{Status: "NOT JOINED", StatusTone: ToneWarn, Message: JoinMessage(err), Footer: JoinFailedFooter}
 }
