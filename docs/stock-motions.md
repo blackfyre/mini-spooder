@@ -13,7 +13,7 @@ Offsets are flash offsets into the full image; flash offset `x` is the instructi
 | Step counts, 32-bit integers from `pm` 15 down to `pm` 1: 10, 9, 10, 2, 11, 11, 7, 1, 8, 8, 11, 11, 11, 11, 2 | 0x4AE84 (RAM 0x3FFE84CC) | Found by scan; consistent with the table boundaries (the generator checks that the 15 tables tile 0x3FC9C–0x40DE7 exactly) |
 | `pm` 9 runs the Say Hi table and then the Standby table; `pm` 12 runs the Standby table and then the Sleep table | dispatch 0x5169–0x517A, 0x5191–0x51A2 | V: `docs/lafvin-motions.md` (Playback, delays and repeats) |
 | `pm` 99 and `pm` 100 write the centre and the zero pose to servos 0–7 with `delay(10)` after each, then `delay(300)`; both poses are 135, 45, 135, 45, 45, 135, 45, 135 | writers 0x1380, 0x13D0; dispatch 0x5106–0x5115, 0x51C4–0x51D3 | V: `docs/lafvin-motions.md` (Servo column mapping and direct poses) |
-| The stock setup runs the zero routine at boot | ROM 0x40201FD8 | `design.md` Context; not reproduced (below) |
+| The stock setup runs the zero routine at boot | ROM 0x40201FD8 | `design.md` Context; reproduced by the boot pose (servo-output, origin `boot`) |
 | The keyframe loop: `floor(T / 10)` steps from index 0, each writing an interpolated angle only to servos whose angle changes, then `delay(10)`; the keyframe angle itself is never written, but the cached pose becomes the keyframe | 0x1420–0x14FE | V: `docs/lafvin-motions.md`, `docs/lafvin-comparison.md` (Motion servicing) |
 | The keyframe loop does not call the web server, so stock motions block every request until they end | 0x1420–0x14FE | V: `docs/lafvin-comparison.md` |
 | `/online` reads `m0`–`m7` and `t1` and calls the same runner with one keyframe; no stock page sends it | 0x3920–0x3B03 | V: `baseline/README.md` |
@@ -44,11 +44,10 @@ Ticks are 10 ms; a keyframe of `T` ms takes `floor(T / 10)` ticks (at least one)
 | 99 | Centre | 0x40DE8 (pose) | — | — | direct pose: 8 writes, 30-tick hold | 38 |
 | 100 | Zero position | 0x40E0C (pose) | — | — | direct pose: 8 writes, 30-tick hold | 38 |
 
-The first motion after a reset or a safe state takes one tick more: the tick that sends servo output the enable request with the zero pose (design D11).
+The first motion after a safe state takes one tick more: the tick that sends servo output the enable request with the zero pose (design D11).
 
 ## Stock behaviour that the player does not reproduce
 
-- **Boot zero routine.** Stock runs the zero routine in its setup, so every servo jumps to the zero pose at boot. The new firmware moves nothing until its first command (design D7); the zero pose is kept as the pose that output is enabled with.
 - **Endpoint shortfall.** Stock interpolates from step index 0 and never writes the keyframe angle, so a servo can stop up to 3° short (servo 0 is commanded to 71, not 70, after Standby from the zero pose) while the cached pose records the keyframe. The player numbers ticks `1 … n` and writes `A ± floor((i·|B − A| + floor(n/2)) / n)`, so the last tick writes the keyframe angle exactly; the tick counts stay stock's (design D3). `core/test/test_motion_trace` checks this against a reference model of the stock loop.
 - **Blocking playback.** Stock serves no HTTP request while a motion plays. The player runs one tick per loop pass when one is due, so the portal and the drive link stay served, a motion can be stopped, and a request during a motion waits in a single pending slot, latest wins (design D4, D5).
 - **Unknown `pm` values.** Stock accepts and ignores them; the player rejects them and changes nothing (design D8).

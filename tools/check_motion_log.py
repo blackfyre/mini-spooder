@@ -6,7 +6,8 @@ Requires the demo sequence in order: `complete` runs of motions 1-15, 99 and
 start; a `complete` Dance 1 whose `command request 1` is 1000 +/- 10 ms after
 its start; a `complete` Standby of 40 ticks that starts within 10 ms of Dance 1's
 end; then a keyframe of 50 ticks. Each `complete` run's tick count must equal the
-generated tables' (plus one enable tick for the first motion) and its duration
+generated tables' (output is already active from the boot pose, so the first
+motion has no enable tick of its own) and its duration
 must be within 5% of design.md's figure (10 ms per table tick). The interrupted
 Forward must have fewer than 165 ticks and no write after the stop. The 2 s
 pauses must last 2000-2100 ms and the keyframe 500 ms within 5%. The logged
@@ -83,7 +84,7 @@ def check(text, ticks):
     for n, r in enumerate(runs):
         if r["status"] != "complete":
             continue
-        expect = ticks[r["id"]] + (1 if n == 0 else 0)
+        expect = ticks[r["id"]]
         if r["ticks"] != expect:
             fails.append(f"run {n + 1} (motion {r['id']}): {r['ticks']} ticks, expected {expect}")
         figure = 10 * ticks[r["id"]]

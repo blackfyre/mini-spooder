@@ -1,7 +1,8 @@
 // mini-spooder firmware entry point (design D4): start-up diagnostics, then one
 // cooperative loop of poll services that returns to the core on every pass.
-// There is no boot pose: the servos stay still until a caller asks the output gate
-// for output with a complete pose.
+// At boot, as stock does, every servo is driven to the enable pose (the stock
+// zero pose, which stock also uses as its centre pose) through an enable request
+// with origin `boot`; with a calibration fault the robot stays limp in `fault`.
 #include <Arduino.h>
 #include <user_interface.h>
 
@@ -76,6 +77,10 @@ void setup() {
     gate->modeLine(line, sizeof line);
     diag::line(line);
   }
+
+  // The boot pose: rejected, and nothing driven, in `fault`. The first pulses go
+  // out in the first loop pass (the driver's poll).
+  outputGate.enable(ms::Origin::Boot, ms::kEnablePose);
 
 #ifdef MINI_SPOODER_CHECK_CONSOLE
   console.begin(outputGate, calibration, loopStats);

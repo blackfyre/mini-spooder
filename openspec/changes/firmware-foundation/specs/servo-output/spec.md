@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Drives the robot's eight servos from commanded angles with the stock pin map and pulse mapping. Output is limited to a per-servo safe range. The robot stays still until output is explicitly enabled with a complete pose, which for servo-output's own enable is the stock zero pose. A safe state, reachable from every mode and overriding every caller, lets all servos go limp. Motions, direct servo control, the zero check and the drive link all share this one output path.
+Drives the robot's eight servos from commanded angles with the stock pin map and pulse mapping. Output is limited to a per-servo safe range. As on stock, every servo is driven to the stock zero pose at boot; after that, output is enabled only with a complete pose on an explicit request, which for servo-output's own enable is the stock zero pose. A safe state, reachable from every mode and overriding every caller, lets all servos go limp. Motions, direct servo control, the zero check and the drive link all share this one output path.
 
 ## ADDED Requirements
 
@@ -67,7 +67,7 @@ Each servo index SHALL have a safe range `[low, high]` of output angles, with `1
 
 The firmware SHALL be in exactly one of four output modes:
 
-- `idle`: after a reset;
+- `idle`: after a reset, until the boot pose (Boot pose);
 - `active`: output enabled;
 - `safe`: output disabled after a safe-state request;
 - `fault`: output disabled after a start-up failure (servo-calibration).
@@ -86,7 +86,7 @@ The firmware SHALL drive servos only in `active`.
   A writer that continues a sequence of its own (motion-playback) SHALL use the token that its enable request returned, not this command.
 - **Safe-state request:** from any mode, a safe-state request carrying a reason (`link-loss` from the drive link, or `check` from the check build's console) SHALL move `idle` or `active` to `safe` at once, in the same loop pass. It SHALL record the reason, release every servo (Release), and make the current token stale. A safe-state request in `safe` or `fault` SHALL change nothing except to update the recorded reason in `safe`.
 - **Calibration fault:** a calibration fault (servo-calibration) SHALL move any mode to `fault`, release every servo, and make the token stale. `fault` SHALL change to `safe` only when servo-calibration reports that every trim is valid.
-- **No other transitions:** the firmware SHALL NOT enter `active` on its own: not at boot, not after a fault clears, and not after a safe state.
+- **No other transitions:** apart from the boot pose (Boot pose), the firmware SHALL NOT enter `active` on its own: not after a fault clears, and not after a safe state.
 - **Notification:** every mode change SHALL be signalled to the rest of the firmware within the call that makes it, before that call returns, so that a caller can stop its own work (for example motion-playback's stop) before its next loop service.
 
 Every mode change SHALL print one line on UART0 in the form `mode <mode> <reason>`. The reason SHALL be the enable request's origin for `active`, the request's reason for `safe`, `calibration` for `fault`, and `calibration-ok` for the change from `fault` to `safe`.
@@ -108,10 +108,10 @@ stateDiagram-v2
   fault --> safe: all trims valid
 ```
 
-#### Scenario: Boot still
+#### Scenario: Limp after a calibration fault at boot
 
-- **WHEN** the robot resets with valid trims and receives no enable request for 10 s
-- **THEN** it stays in `idle`, and no servo pin carries pulses during those 10 s
+- **WHEN** the robot resets with an invalid trim and receives no request for 10 s
+- **THEN** it stays in `fault`, and no servo pin carries pulses during those 10 s
 
 #### Scenario: Enable with a complete pose
 
@@ -160,16 +160,30 @@ stateDiagram-v2
 
 ### Requirement: Enable pose
 
-servo-output SHALL define the enable pose as the stock zero pose, 135, 45, 135, 45, 45, 135, 45, 135 for servos 0–7, which the stock firmware attaches at boot, and SHALL make it available to the rest of the firmware. Every enable request that servo-output makes itself (the direct servo command in `idle` or `safe`) SHALL carry the enable pose. The enable pose SHALL NOT be applied at boot: the robot stays still after a reset until an accepted enable request (the Boot still scenario of Output modes and safe state).
+servo-output SHALL define the enable pose as the stock zero pose, 135, 45, 135, 45, 45, 135, 45, 135 for servos 0–7, which the stock firmware attaches at boot, and SHALL make it available to the rest of the firmware. Every enable request that servo-output makes itself (the direct servo command in `idle` or `safe`) SHALL carry the enable pose, as SHALL the firmware's boot pose (Boot pose).
 
 #### Scenario: Enable pose value
 
 - **WHEN** the enable pose is read
 - **THEN** it is 135, 45, 135, 45, 45, 135, 45, 135, and no angle of it is limited by the default safe ranges with trims of −1 or 0
 
+### Requirement: Boot pose
+
+As the stock firmware does in its setup, the firmware SHALL, once per reset, at the end of start-up and before its first loop pass, make one enable request with origin `boot` and the enable pose. An enable request with origin `boot` SHALL be accepted only in `idle` while no drive-link session is live, and SHALL be rejected in `active`, `safe` and `fault`, changing no output; so the robot never moves by itself after a safe state or a calibration fault. When it is accepted, the line `mode active boot` SHALL be printed, and every servo's first pulse SHALL already have the width for its enable-pose angle. Afterwards output in `active` with origin `boot` is handled as any `active`: the web portal, a drive-link session and the check build take over as their rules permit.
+
+#### Scenario: Boot pose
+
+- **WHEN** the robot resets with valid trims
+- **THEN** the line `mode active boot` is printed, all eight servos carry pulses for the enable pose 135, 45, 135, 45, 45, 135, 45, 135 within 40 ms of the first loop pass, and each servo's first pulse already has the width for its angle in that pose
+
+#### Scenario: No boot pose after a safe state
+
+- **WHEN** the mode is `safe` and an enable request with origin `boot` is made
+- **THEN** it is rejected, the mode stays `safe` and no servo carries pulses
+
 ### Requirement: Enabling output
 
-Output SHALL be enabled from `idle` or `safe` only on behalf of an explicit request to play a motion or a keyframe (motion-playback), on behalf of a direct servo command (Output modes and safe state), or on behalf of a command of a build made for the on-robot checks (origin `check`). A stop, a calibration change, the start or end of a drive-link session, and a mode change SHALL NOT make an enable request. Each enable request SHALL name its origin: `link` (a motion request from the drive link), `portal` (a motion, keyframe or direct servo request from the web portal) or `check` (a command of a build made for the on-robot checks: the check build's `enable` command, or a motion request of an on-robot check build that a later change adds, such as motion-playback's demonstration). Origin `check` SHALL be permitted only in a firmware built for on-robot checks, which the build marks with `MINI_SPOODER_CHECK_BUILD` (firmware-build); in any other firmware an enable request with origin `check` SHALL be rejected in every mode, including `active`, and SHALL change no output. In `idle` or `safe`, an enable request SHALL be accepted only in one of these cases:
+Output SHALL be enabled from `idle` or `safe` only on behalf of an explicit request to play a motion or a keyframe (motion-playback), on behalf of a direct servo command (Output modes and safe state), or on behalf of a command of a build made for the on-robot checks (origin `check`). A stop, a calibration change, the start or end of a drive-link session, and a mode change SHALL NOT make an enable request. Each enable request SHALL name its origin: `boot` (the boot pose, Boot pose, whose rule is there), `link` (a motion request from the drive link), `portal` (a motion, keyframe or direct servo request from the web portal) or `check` (a command of a build made for the on-robot checks: the check build's `enable` command, or a motion request of an on-robot check build that a later change adds, such as motion-playback's demonstration). Origin `check` SHALL be permitted only in a firmware built for on-robot checks, which the build marks with `MINI_SPOODER_CHECK_BUILD` (firmware-build); in any other firmware an enable request with origin `check` SHALL be rejected in every mode, including `active`, and SHALL change no output. In `idle` or `safe`, an enable request SHALL be accepted only in one of these cases:
 
 - its origin is `link`, and a drive-link session is live that started after output was last disabled (the reset, or the last entry into `safe` or `fault`);
 - its origin is `portal` or `check`, and no drive-link session is live.
@@ -223,8 +237,8 @@ Any other enable request in `idle` or `safe` SHALL be rejected, SHALL leave the 
 
 #### Scenario: First request after a reset
 
-- **WHEN** the robot has reset, no drive-link session is live, and the web portal requests motion 1
-- **THEN** the enable request with origin `portal` is accepted and the mode changes from `idle` to `active`
+- **WHEN** the robot has reset into the boot pose, no drive-link session is live, and the web portal requests motion 1
+- **THEN** the enable request with origin `portal` is accepted, its pose is applied and the mode stays `active`
 
 ### Requirement: Boot-strapping pins
 

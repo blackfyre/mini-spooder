@@ -463,6 +463,52 @@ static void test_mode_lines() {
   assertModeLine(f.gate, "mode safe calibration-ok");
 }
 
+// The boot pose (origin `boot`): accepted only in the reset's `idle`.
+static void test_boot_enable_from_idle() {
+  Fixture f;
+  const EnableResult r = f.gate.enable(Origin::Boot, kEnablePose);
+  TEST_ASSERT_TRUE(r.accepted);
+  TEST_ASSERT_EQUAL_UINT32(f.gate.token(), r.token);
+  TEST_ASSERT_EQUAL(OutputMode::Active, f.gate.mode());
+  assertPose(f.bank, kEnablePose);
+  assertModeLine(f.gate, "mode active boot");
+  TEST_ASSERT_EQUAL_STRING("mode active boot", f.rec.lastLine);
+  // The portal and a link session take over as from any `active`.
+  TEST_ASSERT_TRUE(f.gate.directServo(3, 100));
+  f.gate.linkSessionStarted();
+  TEST_ASSERT_TRUE(f.gate.enable(Origin::Link, kStandby).accepted);
+  assertModeLine(f.gate, "mode active boot");
+}
+
+static void test_boot_enable_rejected_elsewhere() {
+  {  // in `active`: the pose is not reapplied
+    Fixture f;
+    f.gate.enable(Origin::Portal, kStandby);
+    const Snapshot before = snap(f.bank);
+    TEST_ASSERT_FALSE(f.gate.enable(Origin::Boot, kEnablePose).accepted);
+    assertSame(before, f.bank);
+  }
+  {  // in `safe`: never moves the robot again after a safe state
+    Fixture f;
+    f.gate.enterSafe(SafeReason::LinkLoss);
+    TEST_ASSERT_FALSE(f.gate.enable(Origin::Boot, kEnablePose).accepted);
+    TEST_ASSERT_EQUAL(OutputMode::Safe, f.gate.mode());
+    assertNoneDriven(f.bank);
+  }
+  {  // in `fault`: stays limp
+    Fixture f(false);
+    TEST_ASSERT_FALSE(f.gate.enable(Origin::Boot, kEnablePose).accepted);
+    TEST_ASSERT_EQUAL(OutputMode::Fault, f.gate.mode());
+    assertNoneDriven(f.bank);
+  }
+  {  // in `idle` with a live session
+    Fixture f;
+    f.gate.linkSessionStarted();
+    TEST_ASSERT_FALSE(f.gate.enable(Origin::Boot, kEnablePose).accepted);
+    TEST_ASSERT_EQUAL(OutputMode::Idle, f.gate.mode());
+  }
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_construction);
@@ -489,5 +535,7 @@ int main() {
   RUN_TEST(test_fault_from_idle_and_safe);
   RUN_TEST(test_fault_clears_session_fact);
   RUN_TEST(test_mode_lines);
+  RUN_TEST(test_boot_enable_from_idle);
+  RUN_TEST(test_boot_enable_rejected_elsewhere);
   return UNITY_END();
 }

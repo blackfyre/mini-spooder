@@ -13,7 +13,9 @@ namespace ms {
 enum class OutputMode : uint8_t { Idle, Active, Safe, Fault };
 
 // The origin of an enable request. Callers pass it; the gate never infers it.
-enum class Origin : uint8_t { Link, Portal, Check };
+// `Boot` is the firmware's own start-up request with the enable pose, as stock
+// attaches every servo at that pose at boot; it is accepted only in `idle`.
+enum class Origin : uint8_t { Link, Portal, Check, Boot };
 
 // The reason recorded for the last safe state.
 enum class SafeReason : uint8_t { None, LinkLoss, Check, CalibrationOk };

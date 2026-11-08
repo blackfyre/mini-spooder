@@ -41,8 +41,8 @@ constexpr SafeRange kSafeRange[kServoCount] = {
     {35, 160}, {35, 145}, {35, 145}, {20, 145},
 };
 
-// The enable pose: the stock zero pose that stock attaches at boot. Never applied
-// at boot here; it is what the direct servo command enables with.
+// The enable pose: the stock zero pose that stock attaches at boot. It is the boot
+// pose (origin `boot`, main.cpp) and what the direct servo command enables with.
 constexpr Pose kEnablePose = {{135, 45, 135, 45, 45, 135, 45, 135}};
 
 inline bool isServoIndex(int servo) { return servo >= 0 && servo < kServoCount; }

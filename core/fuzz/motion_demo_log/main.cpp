@@ -25,6 +25,7 @@ int main() {
   ms::ServoBank bank;
   ms::OutputGate gate(bank, true, true);
   gate.addModeListener(printMode, nullptr);
+  gate.enable(ms::Origin::Boot, ms::kEnablePose);  // the firmware's boot pose (main.cpp)
   ms::GateMotionOutput output(gate);
   ms::MotionPlayer player(output);
   ms::MotionDemo demo(player, printLine, nullptr);

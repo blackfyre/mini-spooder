@@ -23,7 +23,7 @@
 **Goals:**
 - One PlatformIO project that later changes extend by adding sources to `firmware/src/` and `core/`, tests to `core/test/`, loop services to `main.cpp`, and, where they need them, their own envs and `pre:` extra scripts, without changing the library link, the source filter or the warning settings.
 - Every rule in servo-output and servo-calibration that does not need hardware is tested on the host.
-- The firmware has a single output gate: one owner for "may the servos move", an overriding safe state, and no movement at boot.
+- The firmware has a single output gate: one owner for "may the servos move", an overriding safe state, and, as on stock, the zero pose at boot (the boot pose, origin `boot`, the user's decision of 2026-11-08); never a movement of its own after a safe state or a fault.
 - Flash writes are deliberate. One task writes the application and one writes stock back. Nothing writes the calibration or SDK sectors by accident.
 
 **Non-Goals:**
@@ -211,7 +211,7 @@ flowchart TD
 These are what the other changes own. This change relies on them and does not specify them.
 
 - **motion-playback:**
-  - It never moves the robot at boot. When the first tick of a motion or keyframe is due and output is not enabled, it gives one complete pose (its enable handshake, which uses the zero pose, equal to servo-output's `kEnablePose`), and it uses the returned token for every later pose or servo command. That handshake and servo-output's own `directServo` are the only paths to `enable` in the normal build.
+  - It never moves the robot at boot itself (the boot pose is servo-output's, made in `setup()`). When the first tick of a motion or keyframe is due and output is not enabled, it gives one complete pose (its enable handshake, which uses the zero pose, equal to servo-output's `kEnablePose`), and it uses the returned token for every later pose or servo command. That handshake, servo-output's own `directServo` and the boot pose in `setup()` are the only paths to `enable` in the normal build.
   - Its firmware binding passes the origin (`link` or `portal`, or `check` in an on-robot check build) of the request whose first tick makes that handshake.
   - It ends the running motion when a command is rejected, and it reads the mode before every tick, so a safe state or fault from any cause ends its motion at its next chance to run without a call from this change. It may also register a mode listener.
   - Its ticks are a poll service within the loop budget.

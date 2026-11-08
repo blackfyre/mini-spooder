@@ -195,7 +195,12 @@ At every service call while a motion or keyframe is under way (after the tick th
 
 #### Scenario: First command after reset
 
-- **WHEN** motion 1 is requested for the first time after a reset
+- **WHEN** motion 1 is requested for the first time after a reset, with servo output active in its boot pose (the zero pose)
+- **THEN** the player sends servo output an enable request with its commanded angles, the zero pose, at the first tick, no servo moves because of it, and Standby plays from that pose in the same tick, 40 ticks in all
+
+#### Scenario: First command while output is not active
+
+- **WHEN** motion 1 is requested while servo output is in `safe`
 - **THEN** the player sends servo output an enable request with the pose 135, 45, 135, 45, 45, 135, 45, 135 at the first tick, writes nothing else in that tick and then plays Standby from that pose, 41 ticks in all
 
 #### Scenario: Origin of the enable request
@@ -230,7 +235,7 @@ At every service call while a motion or keyframe is under way (after the tick th
 
 #### Scenario: Direct servo command does not start the player
 
-- **WHEN** the player is idle after a reset and a direct servo command enables output and sets one servo
+- **WHEN** the player is idle after a reset and a direct servo command sets one servo
 - **THEN** the player writes nothing, sends no enable request and reports itself idle
 
 ### Requirement: Single keyframe

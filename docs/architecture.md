@@ -47,12 +47,12 @@ Every servo command goes through the output gate (`core/servo/output_gate.*`). I
 
 | Mode | Meaning |
 |---|---|
-| `idle` | After boot: nothing driven, every servo limp |
+| `idle` | Only during start-up, until the boot pose |
 | `active` | Output on, enabled by an explicit request |
 | `safe` | Every servo limp after a link loss (or a check command) until a new explicit request |
 | `fault` | Calibration unreadable: nothing moves until it is repaired |
 
-The robot never moves by itself: not at boot, and not after a fault or a failsafe. Output switches on only for an explicit request, from the pak, the portal or a check build. It always starts in the stock zero pose. The caller that switched output on gets a writer token, so a stale caller can't keep driving the servos. While a pak session is live, the gate refuses the portal's requests. That is the portal lock.
+At boot, as on stock, every servo goes to the stock zero pose (`mode active boot`), unless the calibration is unreadable. After that the robot never moves by itself: not after a fault or a failsafe. Output switches on again only for an explicit request, from the pak, the portal or a check build, and always starts in the stock zero pose. The caller that switched output on gets a writer token, so a stale caller can't keep driving the servos. While a pak session is live, the gate refuses the portal's requests. That is the portal lock.
 
 Every commanded angle has the servo's calibration trim added, then is limited to a safe range for that servo, before it becomes a pulse width. The conversion is the stock one: 1–180° maps to 400–2400 µs.
 

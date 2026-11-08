@@ -19,6 +19,7 @@ const char* originName(Origin origin) {
     case Origin::Link: return "link";
     case Origin::Portal: return "portal";
     case Origin::Check: return "check";
+    case Origin::Boot: return "boot";
   }
   return "?";
 }
@@ -79,6 +80,8 @@ bool OutputGate::permittedIn(OutputMode mode, Origin origin) const {
         case Origin::Link: return sessionLive_ && sessionAfterDisable_;
         case Origin::Portal: return !sessionLive_;
         case Origin::Check: return checkPermitted_ && !sessionLive_;
+        // Only the reset's `idle`: never after a safe state.
+        case Origin::Boot: return mode == OutputMode::Idle && !sessionLive_;
       }
       return false;
     case OutputMode::Active:
@@ -87,6 +90,7 @@ bool OutputGate::permittedIn(OutputMode mode, Origin origin) const {
         case Origin::Link: return sessionLive_ && sessionAfterDisable_;
         case Origin::Portal: return !sessionLive_;
         case Origin::Check: return checkPermitted_;
+        case Origin::Boot: return false;
       }
       return false;
   }

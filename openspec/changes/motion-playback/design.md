@@ -13,7 +13,7 @@ See proposal.md for the motivation. The requirements are in `specs/motion-playba
 | Step counts, as 32-bit integers from `pm` 15 down to `pm` 1: 10, 9, 10, 2, 11, 11, 7, 1, 8, 8, 11, 11, 11, 11, 2 | flash 0x4AE84 (RAM 0x3FFE84CC) | Found by scan, consistent with the table boundaries |
 | `pm` 9 runs the Say Hi table and then the Standby table; `pm` 12 runs the Standby table and then the Sleep table | flash 0x5169–0x517A, 0x5191–0x51A2 | Verified |
 | `pm` 99 and `pm` 100 write the centre pose and the zero pose to servos 0–7 with `delay(10)` after each, then `delay(300)`; on stock both poses are 135, 45, 135, 45, 45, 135, 45, 135 | flash 0x1380, 0x13D0; dispatch 0x5106–0x5115, 0x51C4–0x51D3 | Verified |
-| The stock setup runs the zero routine at boot, so every servo is attached in the zero pose and a single servo can be moved straight after boot | ROM 0x40201FD8 | Found in the disassembly; the move at boot is not reproduced (D7); the zero pose is kept as the enable pose (D11) |
+| The stock setup runs the zero routine at boot, so every servo is attached in the zero pose and a single servo can be moved straight after boot | ROM 0x40201FD8 | Found in the disassembly; reproduced by servo-output's boot pose (D7); the zero pose is also the enable pose (D11) |
 | The keyframe loop: `floor(T / 10)` steps from index 0; each step writes an interpolated angle only to servos whose angle changes, then `delay(10)`; the keyframe angle itself is never written, but the cached pose becomes the keyframe | flash 0x1420–0x14FE | Verified; the shortfall is a stock defect, not reproduced (D3) |
 | The keyframe loop does not call the web server, so stock motions block every request until they end | flash 0x1420–0x14FE | Verified |
 | `/online` reads `m0`–`m7` and `t1` and calls the same runner with one keyframe; no stock page sends it | flash 0x3920–0x3B03 | Verified (baseline/README.md) |
@@ -110,9 +110,9 @@ Stock blocks during a motion, so HTTP requests that arrive during a motion are h
 
 Stop is new: stock has none, because it serves no request while a motion plays. Stop ends the motion before its next tick, discards the pending request and holds the last angles written. A return to Standby is a request for motion 1, as the stock Standby button is; no separate command exists, because no caller needs one. The player keeps no pose of its own: every keyframe and direct pose starts from servo output's commanded angles. A direct servo command from the portal, a stop part-way through a keyframe and an exact keyframe end therefore all leave the one pose that the next motion starts from, and the telemetry reports the same angles that the servos were commanded to.
 
-### D7. Still at boot
+### D7. The zero pose at boot
 
-Stock runs the zero routine in its setup. The new firmware does not move at boot: the player writes nothing until its first command. A reset during walking (for example a brown-out) then leaves the robot limp instead of jumping to the zero pose. The zero pose is still where output starts (D11): at the first motion or keyframe, and, by servo output's rule, at a direct servo command that enables output (Cross-change assumptions). The player itself starts nothing because of a direct servo command.
+Stock runs the zero routine in its setup. The new firmware does the same through servo-output's boot pose (`firmware-foundation`, origin `boot`, the user's decision of 2026-11-08, which replaced an earlier still boot): every servo goes to the zero pose at start-up. The player itself still writes nothing until its first command, so its first motion after a reset starts with output already active and sends its enable request with servo output's commanded angles (no enable tick). A reset during walking (for example a brown-out) therefore jumps to the zero pose, as on stock. The zero pose is still where output starts (D11): at the first motion or keyframe, and, by servo output's rule, at a direct servo command that enables output (Cross-change assumptions). The player itself starts nothing because of a direct servo command.
 
 ### D8. `pms`, unknown ids and `pm` 99
 
@@ -162,7 +162,7 @@ sequenceDiagram
 - **[Latest request wins, which differs from stock.]** Clicking several buttons during a motion in the portal plays only the last. → A deliberate deviation (D5). It only differs from stock when requests overlap a motion.
 - **[Hold-to-repeat leaves a gap between runs.]** The pak requests the next run only after telemetry (every 100 ms) shows that the previous one ended, so a held walk pauses briefly between runs. → The robot keeps stock's play-once rule; the gap is the pak's and drive-link's timing, not the player's.
 - **[Intermediate angles differ from stock by about one step.]** → The poses at keyframe ends and the tick counts are stock's; the video comparison (task 5.4) judges the visual match.
-- **[The first motion after a reset or a safe state starts with a jump to the zero pose.]** All eight servos start at once in the zero pose, also from a limp robot after a link loss. → This is where stock's boot routine put them; the user chose the stock pose as the enable pose. It happens only after an explicit request (a motion, a keyframe or, by servo output's rule, a direct servo command), never at boot.
+- **[The first motion after a reset or a safe state starts with a jump to the zero pose.]** All eight servos start at once in the zero pose, also from a limp robot after a link loss. → This is where stock's boot routine put them; the user chose the stock pose as the enable pose. After a safe state it happens only after an explicit request (a motion, a keyframe or, by servo output's rule, a direct servo command); at boot it is servo-output's boot pose.
 - **[RAM for the tables.]** About 1.3 KB of DRAM. → Acceptable against the ESP8266's roughly 80 KB. Revisit if `firmware-build` reports a RAM budget problem.
 
 ## Migration Plan
